@@ -1,3 +1,9 @@
+//-----------------------------------------------------------------------
+// <copyright file="ServiceLauncherToolWindowFactory.java" company="Soloplan GmbH">
+// Copyright (c) Soloplan GmbH. All rights reserved.
+// </copyright>
+//-----------------------------------------------------------------------
+
 package local.soloplan.tools.servicelauncher;
 
 import com.intellij.openapi.project.DumbAware;
@@ -8,12 +14,18 @@ import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentFactory;
 import org.jetbrains.annotations.NotNull;
 
-public final class ServiceLauncherToolWindowFactory implements ToolWindowFactory, DumbAware {
-    @Override
-    public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
-        ServiceLauncherPanel panel = new ServiceLauncherPanel(project);
-        Content content = ContentFactory.getInstance().createContent(panel, "", false);
-        content.setDisposer(panel);
-        toolWindow.getContentManager().addContent(content);
-    }
+/**
+ * Represents a service launcher tool window factory.
+ */
+public final class ServiceLauncherToolWindowFactory implements ToolWindowFactory, DumbAware
+{
+  /** {@inheritDoc} */
+  @Override
+  public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow)
+  {
+    ServiceLauncherPanel panel = new ServiceLauncherPanel(project);
+    Content content = ContentFactory.getInstance().createContent(panel, "", false);
+    content.setDisposer(panel);
+    toolWindow.getContentManager().addContent(content);
+  }
 }

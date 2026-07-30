@@ -1,3 +1,9 @@
+//-----------------------------------------------------------------------
+// <copyright file="ServiceLauncherPanel.java" company="Soloplan GmbH">
+// Copyright (c) Soloplan GmbH. All rights reserved.
+// </copyright>
+//-----------------------------------------------------------------------
+
 package local.soloplan.tools.servicelauncher;
 
 import com.intellij.execution.ExecutionListener;
@@ -6,8 +12,6 @@ import com.intellij.execution.ProgramRunnerUtil;
 import com.intellij.execution.RunManager;
 import com.intellij.execution.RunManagerListener;
 import com.intellij.execution.RunnerAndConfigurationSettings;
-import com.intellij.execution.executors.DefaultDebugExecutor;
-import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.icons.AllIcons;
@@ -24,7 +28,6 @@ import com.intellij.util.messages.MessageBusConnection;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.BorderFactory;
-import javax.swing.ButtonModel;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.Icon;
@@ -36,12 +39,9 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
-import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
-import javax.swing.border.Border;
-import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -51,13 +51,7 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
-import java.awt.GridLayout;
-import java.awt.Insets;
 import java.awt.Point;
-import java.awt.Rectangle;
-import java.awt.RenderingHints;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -71,1108 +65,1588 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-final class ServiceLauncherPanel extends JPanel implements Disposable {
-    private static final int MIN_CARD_WIDTH = 180;
-    private static final int CARD_GAP = 6;
-    private static final int RUNNING_BORDER_WIDTH = 2;
-    private static final int STARTING_ANIMATION_FRAME_DELAY_MS = 16;
-    private static final float STARTING_ANIMATION_SPEED_PX_PER_SECOND = 87.5f;
-    private static final Color RUNNING_ACCENT = new JBColor(new Color(0xE8007F), new Color(0xFB068D));
-    private static final Color CARD_BACKGROUND = new JBColor(new Color(0xF2F2F2), new Color(0x343434));
-    private static final Color UNSELECTED_CARD_BACKGROUND =
-        new JBColor(new Color(0xDADADA), new Color(0x292929));
-    private static final Color UNSELECTED_TEXT =
-        new JBColor(new Color(0x747474), new Color(0x929292));
-    private static final Color MUTED_BORDER = new JBColor(new Color(0xA0A0A0), new Color(0x8B8B8B));
-    private static final Color UNSELECTED_BORDER =
-        new JBColor(new Color(0xB8B8B8), new Color(0x515151));
-    private static final Color HOVER_BACKGROUND = new JBColor(new Color(0xDFE1E5), new Color(0x45474D));
-    private static final Color PRESSED_BACKGROUND = new JBColor(new Color(0xC9CCD2), new Color(0x55575E));
+/**
+ * Represents a service launcher panel.
+ */
+final class ServiceLauncherPanel extends JPanel implements Disposable
+{
+  private static final int MIN_CARD_WIDTH = 180;
+  private static final int RUNNING_BORDER_WIDTH = 2;
+  private static final int STARTING_ANIMATION_FRAME_DELAY_MS = 16;
+  private static final float STARTING_ANIMATION_SPEED_PX_PER_SECOND = 87.5f;
+  private static final Color RUNNING_ACCENT = new JBColor(new Color(0xE8007F), new Color(0xFB068D));
+  private static final Color CARD_BACKGROUND = new JBColor(new Color(0xF2F2F2), new Color(0x343434));
+  private static final Color UNSELECTED_CARD_BACKGROUND =
+    new JBColor(new Color(0xDADADA), new Color(0x292929));
+  private static final Color UNSELECTED_TEXT =
+    new JBColor(new Color(0x747474), new Color(0x929292));
+  private static final Color MUTED_BORDER = new JBColor(new Color(0xA0A0A0), new Color(0x8B8B8B));
+  private static final Color UNSELECTED_BORDER =
+    new JBColor(new Color(0xB8B8B8), new Color(0x515151));
+  private final Project project;
+  private final VerticalScrollablePanel groupsPanel = new VerticalScrollablePanel();
+  private final Set<String> selected = new HashSet<>();
+  private final Map<String, List<RunningSession>> runningSessions = new HashMap<>();
+  private final Map<String, ExecutionMode> pendingRestarts = new HashMap<>();
+  private final Set<String> pendingStarts = new HashSet<>();
+  private final Map<String, ServiceCard> cards = new HashMap<>();
+  private final Map<String, ServiceCard> cardsByConfiguration = new HashMap<>();
+  private final AtomicBoolean rebuildScheduled = new AtomicBoolean();
+  private final Timer startingAnimationTimer =
+    new Timer(STARTING_ANIMATION_FRAME_DELAY_MS, event -> advanceStartingAnimation());
+  private float startingAnimationOffset;
+  private long lastStartingAnimationFrameNanos;
+  private final StartingBorder startingBorder = new StartingBorder(RUNNING_ACCENT, () -> startingAnimationOffset);
+  private final MessageBusConnection connection;
+  private Map<String, RunnerAndConfigurationSettings> availableByName = Map.of();
+  private Map<String, ServiceLauncherSettings.LauncherConfiguration> configurationsById = Map.of();
+  private List<ServiceLauncherSettings.LauncherConfiguration> currentConfigurations = List.of();
+  private JButton runButton;
+  private JButton debugButton;
+  private JButton restartAllButton;
+  private JButton stopAllButton;
+  private final Icon startingIcon = new AnimatedIcon.Default();
 
-    private final Project project;
-    private final VerticalScrollablePanel groupsPanel = new VerticalScrollablePanel();
-    private final Set<String> selected = new HashSet<>();
-    private final Map<String, List<RunningSession>> runningSessions = new HashMap<>();
-    private final Map<String, Boolean> pendingRestarts = new HashMap<>();
-    private final Set<String> pendingStarts = new HashSet<>();
-    private final Map<String, ServiceCard> cards = new HashMap<>();
-    private final Map<String, ServiceCard> cardsByConfiguration = new HashMap<>();
-    private final AtomicBoolean rebuildScheduled = new AtomicBoolean();
-    private final Timer startingAnimationTimer =
-        new Timer(STARTING_ANIMATION_FRAME_DELAY_MS, event -> advanceStartingAnimation());
-    private final Border startingBorder = new StartingBorder();
-    private final MessageBusConnection connection;
-    private Map<String, RunnerAndConfigurationSettings> availableByName = Map.of();
-    private Map<String, ServiceLauncherSettings.ServiceAppearance> appearancesById = Map.of();
-    private List<ServiceLauncherSettings.ServiceAppearance> currentAppearances = List.of();
-    private JButton runButton;
-    private JButton debugButton;
-    private JButton restartAllButton;
-    private JButton stopAllButton;
-    private final Icon startingIcon = new AnimatedIcon.Default();
-    private float startingAnimationOffset;
-    private long lastStartingAnimationFrameNanos;
+  /**
+   * Creates a new {@code ServiceLauncherPanel} instance.
+   *
+   * @param project the project
+   */
+  ServiceLauncherPanel(Project project)
+  {
+    super(new BorderLayout());
+    this.project = project;
+    configureUserInterface();
+    connection = project.getMessageBus().connect(this);
+    subscribeToExecutionEvents();
+    subscribeToRunConfigurationEvents();
+    rebuild();
+  }
 
-    ServiceLauncherPanel(Project project) {
-        super(new BorderLayout());
-        this.project = project;
-        setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
-        groupsPanel.setOpaque(false);
-        groupsPanel.setLayout(new BoxLayout(groupsPanel, BoxLayout.Y_AXIS));
+  /**
+   * Configures the user interface.
+   */
+  private void configureUserInterface()
+  {
+    setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+    groupsPanel.setOpaque(false);
+    groupsPanel.setLayout(new BoxLayout(groupsPanel, BoxLayout.Y_AXIS));
+    add(createToolbar(), BorderLayout.NORTH);
+    JScrollPane scrollPane = new JBScrollPane(groupsPanel);
+    scrollPane.setBorder(BorderFactory.createEmptyBorder());
+    scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+    add(scrollPane, BorderLayout.CENTER);
+    installSelectionPopup(groupsPanel);
+    installSelectionPopup(scrollPane.getViewport());
+  }
 
-        add(createToolbar(), BorderLayout.NORTH);
-        JScrollPane scrollPane = new JBScrollPane(groupsPanel);
-        scrollPane.setBorder(BorderFactory.createEmptyBorder());
-        scrollPane.getVerticalScrollBar().setUnitIncrement(16);
-        add(scrollPane, BorderLayout.CENTER);
-        installSelectionPopup(groupsPanel);
-        installSelectionPopup(scrollPane.getViewport());
+  /**
+   * Performs the subscribe to execution events operation.
+   */
+  private void subscribeToExecutionEvents()
+  {
+    ExecutionListener listener = new ExecutionListener()
+    {
+      /** {@inheritDoc} */
+      @Override
+      public void processStarted(@NotNull String executorId, @NotNull ExecutionEnvironment environment,
+                   @NotNull ProcessHandler handler)
+                   {
+        sessionStarted(executorId, environment, handler);
+                   }
 
-        connection = project.getMessageBus().connect(this);
-        connection.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
-            @Override
-            public void processStarted(@NotNull String executorId, @NotNull ExecutionEnvironment environment,
-                                       @NotNull ProcessHandler handler) {
-                sessionStarted(executorId, environment, handler);
-            }
+      /** {@inheritDoc} */
+      @Override
+      public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment environment)
+      {
+        sessionNotStarted(environment);
+      }
 
-            @Override
-            public void processNotStarted(@NotNull String executorId, @NotNull ExecutionEnvironment environment) {
-                sessionNotStarted(environment);
-            }
+      /** {@inheritDoc} */
+      @Override
+      public void processTerminated(@NotNull String executorId, @NotNull ExecutionEnvironment environment,
+                     @NotNull ProcessHandler handler, int exitCode)
+                     {
+        sessionTerminated(environment, handler);
+                     }
+    };
+    connection.subscribe(ExecutionManager.EXECUTION_TOPIC, listener);
+  }
 
-            @Override
-            public void processTerminated(@NotNull String executorId, @NotNull ExecutionEnvironment environment,
-                                          @NotNull ProcessHandler handler, int exitCode) {
-                sessionTerminated(environment, handler);
-            }
-        });
-        connection.subscribe(RunManagerListener.TOPIC, new RunManagerListener() {
-            @Override
-            public void runConfigurationAdded(@NotNull RunnerAndConfigurationSettings settings) {
-                rebuildLater();
-            }
+  /**
+   * Performs the subscribe to run configuration events operation.
+   */
+  private void subscribeToRunConfigurationEvents()
+  {
+    RunManagerListener listener = new RunManagerListener()
+    {
+      /** {@inheritDoc} */
+      @Override
+      public void runConfigurationAdded(@NotNull RunnerAndConfigurationSettings settings)
+      {
+        rebuildLater();
+      }
 
-            @Override
-            public void runConfigurationRemoved(@NotNull RunnerAndConfigurationSettings settings) {
-                rebuildLater();
-            }
+      /** {@inheritDoc} */
+      @Override
+      public void runConfigurationRemoved(@NotNull RunnerAndConfigurationSettings settings)
+      {
+        rebuildLater();
+      }
 
-            @Override
-            public void runConfigurationChanged(@NotNull RunnerAndConfigurationSettings settings, String existingId) {
-                rebuildLater();
-            }
-        });
+      /** {@inheritDoc} */
+      @Override
+      public void runConfigurationChanged(@NotNull RunnerAndConfigurationSettings settings, String existingId)
+      {
+        rebuildLater();
+      }
+    };
+    connection.subscribe(RunManagerListener.TOPIC, listener);
+  }
 
+  /**
+   * Creates the toolbar.
+   *
+   * @return the create toolbar result
+   */
+  private JPanel createToolbar()
+  {
+    JPanel toolbar = new JPanel(new BorderLayout());
+    toolbar.setOpaque(false);
+    toolbar.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+    toolbar.add(createEditButton(), BorderLayout.WEST);
+    toolbar.add(createLaunchActions(), BorderLayout.EAST);
+    refreshAggregateActionState();
+    return toolbar;
+  }
+
+  /**
+   * Creates the edit button.
+   *
+   * @return the create edit button result
+   */
+  private JButton createEditButton()
+  {
+    JButton editButton = iconButton(AllIcons.Actions.Edit, "Customize services");
+    editButton.addActionListener(actionEvent -> editLauncherConfigurations());
+    return editButton;
+  }
+
+  /**
+   * Creates the launch actions.
+   *
+   * @return the create launch actions result
+   */
+  private JPanel createLaunchActions()
+  {
+    JPanel launchActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+    launchActions.setOpaque(false);
+    runButton = iconButton(AllIcons.Actions.Execute, "Run selected services that are not already running");
+    runButton.addActionListener(actionEvent -> startSelectedServices(ExecutionMode.RUN));
+    debugButton = iconButton(AllIcons.Actions.StartDebugger, "Debug selected services that are not already running");
+    debugButton.addActionListener(actionEvent -> startSelectedServices(ExecutionMode.DEBUG));
+    restartAllButton = iconButton(AllIcons.Actions.Restart, "Start missing and restart all running selected services");
+    restartAllButton.addActionListener(actionEvent -> restartSelected());
+    stopAllButton = iconButton(AllIcons.Actions.StopRefresh, "Stop all services running from this launcher");
+    stopAllButton.addActionListener(actionEvent -> stopAllServices());
+    launchActions.add(runButton);
+    launchActions.add(debugButton);
+    launchActions.add(restartAllButton);
+    launchActions.add(stopAllButton);
+    return launchActions;
+  }
+
+  /**
+   * Returns the result of icon button.
+   *
+   * @param icon the icon
+   * @param tooltip the tooltip
+   * @return the icon button result
+   */
+  private JButton iconButton(Icon icon, String tooltip)
+  {
+    return new HoverIconButton(icon, tooltip, HoverIconButton.Size.TOOLBAR);
+  }
+
+  /**
+   * Rebuilds the operation.
+   */
+  private void rebuild()
+  {
+    cards.clear();
+    cardsByConfiguration.clear();
+    groupsPanel.removeAll();
+    Map<String, RunnerAndConfigurationSettings> available = availableConfigurations();
+    ServiceLauncherSettings launcherSettings = ServiceLauncherSettings.getInstance(project);
+    List<ServiceLauncherSettings.LauncherConfiguration> launcherConfigurations =
+      launcherSettings.reconciledWith(new ArrayList<>(available.keySet()));
+    updateConfigurationSnapshot(available, launcherConfigurations);
+    Map<String, List<ServiceLauncherSettings.LauncherConfiguration>> groups =
+      groupVisibleConfigurations(launcherSettings, launcherConfigurations);
+    renderGroups(groups, available);
+    finishRebuild(available);
+  }
+
+  /**
+   * Updates the configuration snapshot.
+   *
+   * @param available the available
+   * @param launcherConfigurations the launcher configurations
+   */
+  private void updateConfigurationSnapshot(
+    Map<String, RunnerAndConfigurationSettings> available,
+    List<ServiceLauncherSettings.LauncherConfiguration> launcherConfigurations
+  )
+  {
+    availableByName = available;
+    currentConfigurations = launcherConfigurations;
+    Map<String, ServiceLauncherSettings.LauncherConfiguration> byId = new HashMap<>();
+    launcherConfigurations.forEach(configuration -> byId.put(configuration.itemId, configuration));
+    configurationsById = byId;
+  }
+
+  /**
+   * Returns the result of group visible configurations.
+   *
+   * @param launcherSettings the launcher settings
+   * @param launcherConfigurations the launcher configurations
+   * @return the group visible configurations result
+   */
+  private Map<String, List<ServiceLauncherSettings.LauncherConfiguration>> groupVisibleConfigurations(
+    ServiceLauncherSettings launcherSettings,
+    List<ServiceLauncherSettings.LauncherConfiguration> launcherConfigurations
+  )
+  {
+    Map<String, List<ServiceLauncherSettings.LauncherConfiguration>> groups = new LinkedHashMap<>();
+    launcherSettings.groupNames().forEach(group -> groups.put(group, new ArrayList<>()));
+    launcherConfigurations.stream()
+      .filter(configuration -> configuration.visible)
+      .forEach(configuration -> addToGroup(groups, configuration));
+    return groups;
+  }
+
+  /**
+   * Adds the to group.
+   *
+   * @param groups the groups
+   * @param configuration the configuration
+   */
+  private void addToGroup(
+    Map<String, List<ServiceLauncherSettings.LauncherConfiguration>> groups,
+    ServiceLauncherSettings.LauncherConfiguration configuration
+  )
+  {
+    String group = ServiceLauncherSettings.normalizeGroup(configuration.group);
+    groups.computeIfAbsent(group, ignored -> new ArrayList<>()).add(configuration);
+  }
+
+  /**
+   * Performs the render groups operation.
+   *
+   * @param groups the groups
+   * @param available the available
+   */
+  private void renderGroups(
+    Map<String, List<ServiceLauncherSettings.LauncherConfiguration>> groups,
+    Map<String, RunnerAndConfigurationSettings> available
+  )
+  {
+    if (groups.isEmpty())
+    {
+      renderEmptyState();
+    }
+    else
+    {
+      groups.forEach((name, configurations) -> renderGroup(name, configurations, available));
+      groupsPanel.add(Box.createVerticalGlue());
+    }
+  }
+
+  /**
+   * Performs the render empty state operation.
+   */
+  private void renderEmptyState()
+  {
+    String message = "<html><div style='text-align:center'>No services or groups yet.<br>"
+      + "Right-click here to create a launcher configuration or group.</div></html>";
+    JBLabel emptyState = new JBLabel(message, SwingConstants.CENTER);
+    emptyState.setAlignmentX(Component.CENTER_ALIGNMENT);
+    groupsPanel.add(Box.createVerticalGlue());
+    groupsPanel.add(emptyState);
+    groupsPanel.add(Box.createVerticalGlue());
+  }
+
+  /**
+   * Performs the render group operation.
+   *
+   * @param name the name
+   * @param configurations the configurations
+   * @param available the available
+   */
+  private void renderGroup(
+    String name,
+    List<ServiceLauncherSettings.LauncherConfiguration> configurations,
+    Map<String, RunnerAndConfigurationSettings> available
+  )
+  {
+    ServiceGroupPanel group = createGroupPanel(name, configurations, available);
+    group.setAlignmentX(Component.LEFT_ALIGNMENT);
+    groupsPanel.add(group);
+    groupsPanel.add(Box.createVerticalStrut(14));
+  }
+
+  /**
+   * Performs the finish rebuild operation.
+   *
+   * @param available the available
+   */
+  private void finishRebuild(Map<String, RunnerAndConfigurationSettings> available)
+  {
+    selected.retainAll(cards.keySet());
+    pendingStarts.retainAll(available.keySet());
+    synchronizeStartingAnimation();
+    refreshAggregateActionState();
+    groupsPanel.revalidate();
+    groupsPanel.repaint();
+  }
+
+  /**
+   * Returns the result of launcher configurations.
+   *
+   * @return the launcher configurations result
+   */
+  private List<ServiceLauncherSettings.LauncherConfiguration> launcherConfigurations()
+  {
+    return currentConfigurations;
+  }
+
+  /**
+   * Returns the result of available configurations.
+   *
+   * @return the available configurations result
+   */
+  private Map<String, RunnerAndConfigurationSettings> availableConfigurations()
+  {
+    Map<String, RunnerAndConfigurationSettings> result = new LinkedHashMap<>();
+    RunManager.getInstance(project).getAllSettings().stream()
+      .filter(settings -> !settings.isTemporary())
+      .sorted(Comparator.comparing(RunnerAndConfigurationSettings::getName, String.CASE_INSENSITIVE_ORDER))
+      .forEach(settings -> result.put(settings.getName(), settings));
+    return result;
+  }
+
+  /**
+   * Creates the group panel.
+   *
+   * @param title the title
+   * @param launcherConfigurations the launcher configurations
+   * @param available the available
+   * @return the create group panel result
+   */
+  private ServiceGroupPanel createGroupPanel(
+    String title,
+    List<ServiceLauncherSettings.LauncherConfiguration> launcherConfigurations,
+    Map<String, RunnerAndConfigurationSettings> available
+  )
+  {
+    List<ServiceCard> groupCards = launcherConfigurations.stream()
+      .map(launcherConfiguration -> createCard(launcherConfiguration, available.get(launcherConfiguration.configurationName)))
+      .toList();
+    return new ServiceGroupPanel(title, groupCards, component -> installGroupPopup(component, title));
+  }
+
+  /**
+   * Creates the card.
+   *
+   * @param launcherConfiguration the launcher configuration
+   * @param settings the settings
+   * @return the create card result
+   */
+  private ServiceCard createCard(
+    ServiceLauncherSettings.LauncherConfiguration launcherConfiguration,
+    RunnerAndConfigurationSettings settings
+  )
+  {
+    ServiceCard card = new ServiceCard(launcherConfiguration, settings);
+    cards.put(launcherConfiguration.itemId, card);
+    if (launcherConfiguration.configurationName != null && !launcherConfiguration.configurationName.isBlank())
+    {
+      cardsByConfiguration.put(launcherConfiguration.configurationName, card);
+    }
+    return card;
+  }
+
+  /**
+   * Selects the all.
+   */
+  private void selectAll()
+  {
+    selected.addAll(cards.keySet());
+    cards.values().forEach(ServiceCard::refreshBorder);
+    refreshLaunchActionState();
+  }
+
+  /**
+   * Selects the none.
+   */
+  private void selectNone()
+  {
+    selected.clear();
+    cards.values().forEach(ServiceCard::refreshBorder);
+    refreshLaunchActionState();
+  }
+
+  /**
+   * Performs the install selection popup operation.
+   *
+   * @param component the component
+   */
+  private void installSelectionPopup(JComponent component)
+  {
+    component.addMouseListener(new MouseAdapter()
+    {
+      /** {@inheritDoc} */
+      @Override
+      public void mousePressed(MouseEvent event)
+      {
+        showSelectionPopup(event);
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public void mouseReleased(MouseEvent event)
+      {
+        showSelectionPopup(event);
+      }
+    });
+  }
+
+  /**
+   * Shows the selection popup.
+   *
+   * @param event the event
+   */
+  private void showSelectionPopup(MouseEvent event)
+  {
+    if (!event.isPopupTrigger())
+    {
+      return;
+    }
+    JPopupMenu menu = new JPopupMenu();
+    JMenuItem addService = new JMenuItem("Add service…");
+    addService.addActionListener(actionEvent -> createService(null));
+    JMenuItem addGroup = new JMenuItem("Add group…");
+    addGroup.addActionListener(actionEvent -> createGroup());
+    menu.add(addService);
+    menu.add(addGroup);
+    menu.addSeparator();
+    JMenuItem selectAllItem = new JMenuItem("Select all visible services");
+    selectAllItem.addActionListener(actionEvent -> selectAll());
+    JMenuItem selectNoneItem = new JMenuItem("Clear selection");
+    selectNoneItem.addActionListener(actionEvent -> selectNone());
+    menu.add(selectAllItem);
+    menu.add(selectNoneItem);
+    menu.show((Component) event.getSource(), event.getX(), event.getY());
+  }
+
+  /**
+   * Starts the selected services.
+   *
+   * @param mode the mode
+   */
+  private void startSelectedServices(ExecutionMode mode)
+  {
+    if (selected.isEmpty())
+    {
+      Messages.showInfoMessage(project, "Select one or more service cards first.", "Service Launcher");
+      return;
+    }
+    Map<String, RunnerAndConfigurationSettings> available = availableByName;
+    List<RunnerAndConfigurationSettings> toStart = selected.stream()
+      .map(configurationsById::get)
+      .filter(item -> item != null && item.configurationName != null && !item.configurationName.isBlank())
+      .filter(item -> !isRunning(item.configurationName) && !pendingStarts.contains(item.configurationName))
+      .map(item -> available.get(item.configurationName))
+      .filter(settings -> settings != null)
+      .toList();
+    markStarting(toStart.stream().map(RunnerAndConfigurationSettings::getName).toList());
+    toStart.forEach(settings -> launch(settings, mode));
+  }
+
+  /**
+   * Restarts the selected.
+   */
+  private void restartSelected()
+  {
+    if (selected.isEmpty())
+    {
+      Messages.showInfoMessage(project, "Select one or more service cards first.", "Service Launcher");
+      return;
+    }
+    for (String itemId : new ArrayList<>(selected))
+    {
+      ServiceLauncherSettings.LauncherConfiguration item = configurationsById.get(itemId);
+      if (item != null && item.configurationName != null && !item.configurationName.isBlank())
+      {
+        restartService(item.configurationName);
+      }
+    }
+  }
+
+  /**
+   * Restarts the service.
+   *
+   * @param configurationName the configuration name
+   */
+  private void restartService(String configurationName)
+  {
+    RunnerAndConfigurationSettings settings = availableByName.get(configurationName);
+    if (settings == null)
+    {
+      return;
+    }
+    List<RunningSession> sessions = runningSessions.get(configurationName);
+    if (sessions == null || sessions.isEmpty())
+    {
+      launch(settings, ExecutionMode.RUN);
+      return;
+    }
+    ExecutionMode mode = sessions.stream().anyMatch(session -> session.mode() == ExecutionMode.DEBUG)
+      ? ExecutionMode.DEBUG
+      : ExecutionMode.RUN;
+    pendingRestarts.put(configurationName, mode);
+    sessions.stream().map(RunningSession::handler).distinct().forEach(this::stopHandler);
+  }
+
+  /**
+   * Starts the service.
+   *
+   * @param configurationName the configuration name
+   * @param mode the mode
+   */
+  private void startService(String configurationName, ExecutionMode mode)
+  {
+    RunnerAndConfigurationSettings settings = availableByName.get(configurationName);
+    if (settings == null || isRunning(configurationName) || pendingStarts.contains(configurationName))
+    {
+      return;
+    }
+    launch(settings, mode);
+  }
+
+  /**
+   * Stops the service.
+   *
+   * @param configurationName the configuration name
+   */
+  private void stopService(String configurationName)
+  {
+    pendingRestarts.remove(configurationName);
+    List<RunningSession> sessions = runningSessions.get(configurationName);
+    if (sessions != null)
+    {
+      sessions.stream().map(RunningSession::handler).distinct().forEach(this::stopHandler);
+    }
+  }
+
+  /**
+   * Stops the all services.
+   */
+  private void stopAllServices()
+  {
+    pendingRestarts.clear();
+    runningSessions.values().stream().flatMap(List::stream).map(RunningSession::handler).distinct()
+      .forEach(this::stopHandler);
+  }
+
+  /**
+   * Stops the handler.
+   *
+   * @param handler the handler
+   */
+  private void stopHandler(ProcessHandler handler)
+  {
+    if (!handler.isProcessTerminated() && !handler.isProcessTerminating())
+    {
+      handler.destroyProcess();
+    }
+  }
+
+  /**
+   * Determines whether running.
+   *
+   * @param configurationName the configuration name
+   * @return whether running
+   */
+  private boolean isRunning(String configurationName)
+  {
+    if (configurationName == null || configurationName.isBlank())
+    {
+      return false;
+    }
+    List<RunningSession> sessions = runningSessions.get(configurationName);
+    return sessions != null && !sessions.isEmpty();
+  }
+
+  /**
+   * Performs the launch operation.
+   *
+   * @param settings the settings
+   * @param mode the mode
+   */
+  private void launch(RunnerAndConfigurationSettings settings, ExecutionMode mode)
+  {
+    markStarting(List.of(settings.getName()));
+    ProgramRunnerUtil.executeConfiguration(settings, mode.executor());
+  }
+
+  /**
+   * Performs the mark starting operation.
+   *
+   * @param configurationNames the configuration names
+   */
+  private void markStarting(List<String> configurationNames)
+  {
+    boolean changed = false;
+    for (String configurationName : configurationNames)
+    {
+      if (pendingStarts.add(configurationName))
+      {
+        changed = true;
+        refreshCardsForConfiguration(configurationName);
+      }
+    }
+    if (changed)
+    {
+      synchronizeStartingAnimation();
+      refreshLaunchActionState();
+    }
+  }
+
+  /**
+   * Performs the clear starting operation.
+   *
+   * @param configurationName the configuration name
+   */
+  private void clearStarting(String configurationName)
+  {
+    if (pendingStarts.remove(configurationName))
+    {
+      refreshCardsForConfiguration(configurationName);
+      synchronizeStartingAnimation();
+      refreshLaunchActionState();
+    }
+  }
+
+  /**
+   * Performs the synchronize starting animation operation.
+   */
+  private void synchronizeStartingAnimation()
+  {
+    if (pendingStarts.isEmpty())
+    {
+      startingAnimationTimer.stop();
+      startingAnimationOffset = 0;
+      lastStartingAnimationFrameNanos = 0;
+    }
+    else if (!startingAnimationTimer.isRunning())
+    {
+      lastStartingAnimationFrameNanos = System.nanoTime();
+      startingAnimationTimer.start();
+    }
+  }
+
+  /**
+   * Performs the advance starting animation operation.
+   */
+  private void advanceStartingAnimation()
+  {
+    long now = System.nanoTime();
+    float elapsedSeconds = (now - lastStartingAnimationFrameNanos) / 1_000_000_000f;
+    lastStartingAnimationFrameNanos = now;
+    startingAnimationOffset += elapsedSeconds * STARTING_ANIMATION_SPEED_PX_PER_SECOND;
+    for (String configurationName : pendingStarts)
+    {
+      ServiceCard card = cardsByConfiguration.get(configurationName);
+      if (card != null)
+      {
+        card.repaint();
+      }
+    }
+  }
+
+  /**
+   * Edits the launcher configurations.
+   */
+  private void editLauncherConfigurations()
+  {
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    ServiceLauncherSettingsDialog dialog = new ServiceLauncherSettingsDialog(project, current);
+    if (dialog.showAndGet())
+    {
+      ServiceLauncherSettings.getInstance(project).replaceWith(dialog.getConfigurations());
+      rebuild();
+    }
+  }
+
+  /**
+   * Edits the launcher configuration.
+   *
+   * @param source the source
+   */
+  private void editLauncherConfiguration(ServiceLauncherSettings.LauncherConfiguration source)
+  {
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    Set<String> groups = new LinkedHashSet<>();
+    current.forEach(item -> groups.add(ServiceLauncherSettings.normalizeGroup(item.group)));
+    int maxOrder = current.size();
+    LauncherConfigurationEditorOptions options =
+      new LauncherConfigurationEditorOptions(groups, availableByName.keySet(), maxOrder);
+    LauncherConfigurationDialogRequest request = LauncherConfigurationDialogRequest.edit(source, options);
+    LauncherConfigurationDialog dialog = new LauncherConfigurationDialog(project, request);
+    if (dialog.showAndGet())
+    {
+      applyEditedLauncherConfiguration(current, dialog.getConfiguration());
+      ServiceLauncherSettings.getInstance(project).replaceWith(current);
+      rebuild();
+    }
+  }
+
+  /**
+   * Creates the service.
+   *
+   * @param initialGroup the initial group
+   */
+  private void createService(String initialGroup)
+  {
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    List<String> groups = groupNames();
+    String group = initialGroup == null
+      ? (groups.isEmpty() ? ServiceLauncherSettings.DEFAULT_GROUP : groups.get(0))
+      : initialGroup;
+    ServiceLauncherSettings.LauncherConfiguration created =
+      new ServiceLauncherSettings.LauncherConfiguration("", (int) current.stream()
+        .filter(item -> group.equals(ServiceLauncherSettings.normalizeGroup(item.group)))
+        .count());
+    created.group = group;
+    created.visible = true;
+    LauncherConfigurationEditorOptions options =
+      new LauncherConfigurationEditorOptions(groups, availableByName.keySet(), current.size() + 1);
+    LauncherConfigurationDialogRequest request = LauncherConfigurationDialogRequest.create(created, options);
+    LauncherConfigurationDialog dialog = new LauncherConfigurationDialog(project, request);
+    if (dialog.showAndGet())
+    {
+      ServiceLauncherSettings.LauncherConfiguration configuration = dialog.getConfiguration();
+      applyEditedLauncherConfiguration(current, configuration);
+      ServiceLauncherSettings.getInstance(project).replaceWith(current);
+      rebuild();
+    }
+  }
+
+  /**
+   * Creates the group.
+   */
+  private void createGroup()
+  {
+    String requested = Messages.showInputDialog(
+      project,
+      "Enter a name for the new group:",
+      "Create Group",
+      Messages.getQuestionIcon()
+    );
+    if (requested == null)
+    {
+      return;
+    }
+    String group = requested.trim();
+    if (group.isEmpty())
+    {
+      Messages.showErrorDialog(project, "The group name cannot be empty.", "Create Group");
+      return;
+    }
+    if (!ServiceLauncherSettings.getInstance(project).addGroup(group))
+    {
+      Messages.showErrorDialog(project, "A group with that name already exists.", "Create Group");
+      return;
+    }
+    rebuild();
+  }
+
+  /**
+   * Removes the service.
+   *
+   * @param service the service
+   */
+  private void removeService(ServiceLauncherSettings.LauncherConfiguration service)
+  {
+    String name = service.displayName == null || service.displayName.isBlank()
+      ? (service.configurationName == null || service.configurationName.isBlank()
+        ? "this launcher configuration"
+        : service.configurationName)
+      : service.displayName;
+    int choice = Messages.showYesNoDialog(
+      project,
+      "Delete the launcher configuration '" + name + "'?",
+      "Delete Launcher Configuration",
+      "Delete",
+      "Cancel",
+      Messages.getWarningIcon()
+    );
+    if (choice != Messages.YES)
+    {
+      return;
+    }
+    selected.remove(service.itemId);
+    if (ServiceLauncherSettings.getInstance(project).removeService(service.itemId))
+    {
+      rebuild();
+    }
+  }
+
+  /**
+   * Applies the edited launcher configuration.
+   *
+   * @param current the current
+   * @param edited the edited
+   */
+  private void applyEditedLauncherConfiguration(List<ServiceLauncherSettings.LauncherConfiguration> current,
+                   ServiceLauncherSettings.LauncherConfiguration edited)
+                   {
+    if (edited.configurationName != null && !edited.configurationName.isBlank())
+    {
+      for (ServiceLauncherSettings.LauncherConfiguration item : current)
+      {
+        if (!item.itemId.equals(edited.itemId)
+          && edited.configurationName.equals(item.configurationName))
+          {
+          item.expectedConfigurationName = item.configurationName;
+          item.configurationName = "";
+          }
+      }
+    }
+    current.removeIf(item -> item.itemId.equals(edited.itemId));
+    String targetGroup = ServiceLauncherSettings.normalizeGroup(edited.group);
+    int insertionIndex = current.size();
+    int seenInGroup = 0;
+    for (int index = 0; index < current.size(); index++)
+    {
+      ServiceLauncherSettings.LauncherConfiguration configuration = current.get(index);
+      if (targetGroup.equals(ServiceLauncherSettings.normalizeGroup(configuration.group)))
+      {
+        if (seenInGroup == edited.order)
+        {
+          insertionIndex = index;
+          break;
+        }
+        insertionIndex = index + 1;
+        seenInGroup++;
+      }
+    }
+    current.add(insertionIndex, edited);
+    ServiceLauncherSettings.normalizeOrders(current);
+                   }
+
+  /**
+   * Moves the within group.
+   *
+   * @param source the source
+   * @param delta the delta
+   */
+  private void moveWithinGroup(ServiceLauncherSettings.LauncherConfiguration source, int delta)
+  {
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    List<ServiceLauncherSettings.LauncherConfiguration> group = current.stream()
+      .filter(item -> ServiceLauncherSettings.normalizeGroup(item.group)
+        .equals(ServiceLauncherSettings.normalizeGroup(source.group)))
+      .sorted(Comparator.comparingInt(item -> item.order))
+      .toList();
+    int index = -1;
+    for (int groupIndex = 0; groupIndex < group.size(); groupIndex++)
+    {
+      if (group.get(groupIndex).itemId.equals(source.itemId))
+      {
+        index = groupIndex;
+        break;
+      }
+    }
+    int target = index + delta;
+    if (index < 0 || target < 0 || target >= group.size())
+    {
+      return;
+    }
+    int oldOrder = group.get(index).order;
+    group.get(index).order = group.get(target).order;
+    group.get(target).order = oldOrder;
+    ServiceLauncherSettings.normalizeOrders(current);
+    rebuild();
+  }
+
+  /**
+   * Moves the to group.
+   *
+   * @param source the source
+   * @param group the group
+   */
+  private void moveToGroup(ServiceLauncherSettings.LauncherConfiguration source, String group)
+  {
+    ServiceLauncherSettings.LauncherConfiguration edited = source.copy();
+    edited.group = group;
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    edited.order = (int) current.stream()
+      .filter(item -> ServiceLauncherSettings.normalizeGroup(item.group).equals(group)).count();
+    applyEditedLauncherConfiguration(current, edited);
+    ServiceLauncherSettings.getInstance(project).replaceWith(current);
+    rebuild();
+  }
+
+  /**
+   * Performs the rename group operation.
+   *
+   * @param sourceGroup the source group
+   */
+  private void renameGroup(String sourceGroup)
+  {
+    String requested = Messages.showInputDialog(
+      project,
+      "Enter a new name for the group:",
+      "Rename Group",
+      Messages.getQuestionIcon(),
+      sourceGroup,
+      null
+    );
+    if (requested == null)
+    {
+      return;
+    }
+    String targetGroup = requested.trim();
+    if (targetGroup.isEmpty())
+    {
+      Messages.showErrorDialog(project, "The group name cannot be empty.", "Rename Group");
+      return;
+    }
+    if (sourceGroup.equals(targetGroup))
+    {
+      return;
+    }
+    ServiceLauncherSettings settings = ServiceLauncherSettings.getInstance(project);
+    if (!settings.renameGroup(sourceGroup, targetGroup))
+    {
+      Messages.showErrorDialog(project, "A group with that name already exists.", "Rename Group");
+      return;
+    }
+    rebuild();
+  }
+
+  /**
+   * Moves the group.
+   *
+   * @param sourceGroup the source group
+   * @param delta the delta
+   */
+  private void moveGroup(String sourceGroup, int delta)
+  {
+    if (ServiceLauncherSettings.getInstance(project).moveGroup(sourceGroup, delta))
+    {
+      rebuild();
+    }
+  }
+
+  /**
+   * Removes the group.
+   *
+   * @param group the group
+   */
+  private void removeGroup(String group)
+  {
+    if (ServiceLauncherSettings.getInstance(project).removeGroup(group))
+    {
+      rebuild();
+    }
+  }
+
+  /**
+   * Returns the result of group names.
+   *
+   * @return the group names result
+   */
+  private List<String> groupNames()
+  {
+    return ServiceLauncherSettings.getInstance(project).groupNames();
+  }
+
+  /**
+   * Performs the install group popup operation.
+   *
+   * @param component the component
+   * @param group the group
+   */
+  private void installGroupPopup(JComponent component, String group)
+  {
+    component.addMouseListener(new MouseAdapter()
+    {
+      /** {@inheritDoc} */
+      @Override
+      public void mousePressed(MouseEvent event)
+      {
+        showGroupPopup(event, group);
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public void mouseReleased(MouseEvent event)
+      {
+        showGroupPopup(event, group);
+      }
+    });
+  }
+
+  /**
+   * Shows the group popup.
+   *
+   * @param event the event
+   * @param group the group
+   */
+  private void showGroupPopup(MouseEvent event, String group)
+  {
+    if (!event.isPopupTrigger())
+    {
+      return;
+    }
+    List<String> groups = groupNames();
+    int groupIndex = groups.indexOf(group);
+    JPopupMenu menu = new JPopupMenu();
+    JMenuItem addService = new JMenuItem("Add service to group…");
+    addService.addActionListener(actionEvent -> createService(group));
+    JMenuItem addGroup = new JMenuItem("Add group…");
+    addGroup.addActionListener(actionEvent -> createGroup());
+    menu.add(addService);
+    menu.add(addGroup);
+    menu.addSeparator();
+    JMenuItem rename = new JMenuItem("Rename group…", AllIcons.Actions.Edit);
+    rename.addActionListener(actionEvent -> renameGroup(group));
+    JMenuItem moveUp = new JMenuItem("Move group up");
+    moveUp.setEnabled(groupIndex > 0);
+    moveUp.addActionListener(actionEvent -> moveGroup(group, -1));
+    JMenuItem moveDown = new JMenuItem("Move group down");
+    moveDown.setEnabled(groupIndex >= 0 && groupIndex < groups.size() - 1);
+    moveDown.addActionListener(actionEvent -> moveGroup(group, 1));
+    JMenuItem remove = new JMenuItem("Remove empty group");
+    remove.setEnabled(launcherConfigurations().stream()
+      .noneMatch(item -> group.equalsIgnoreCase(ServiceLauncherSettings.normalizeGroup(item.group))));
+    remove.addActionListener(actionEvent -> removeGroup(group));
+    menu.add(rename);
+    menu.add(moveUp);
+    menu.add(moveDown);
+    menu.add(remove);
+    menu.addSeparator();
+    JMenuItem selectAllItem = new JMenuItem("Select all visible services");
+    selectAllItem.addActionListener(actionEvent -> selectAll());
+    JMenuItem selectNoneItem = new JMenuItem("Clear selection");
+    selectNoneItem.addActionListener(actionEvent -> selectNone());
+    menu.add(selectAllItem);
+    menu.add(selectNoneItem);
+    menu.show((Component) event.getSource(), event.getX(), event.getY());
+  }
+
+  /**
+   * Performs the session started operation.
+   *
+   * @param executorId the executor id
+   * @param environment the environment
+   * @param handler the handler
+   */
+  private void sessionStarted(String executorId, ExecutionEnvironment environment, ProcessHandler handler)
+  {
+    RunnerAndConfigurationSettings settings = environment.getRunnerAndConfigurationSettings();
+    if (settings == null)
+    {
+      return;
+    }
+    ApplicationManager.getApplication().invokeLater(() ->
+    {
+      String name = settings.getName();
+      clearStarting(name);
+      if (!cardsByConfiguration.containsKey(name))
+      {
+        refreshLaunchActionState();
+        return;
+      }
+      ExecutionMode mode = ExecutionMode.fromExecutorId(executorId);
+      List<RunningSession> sessions = runningSessions.computeIfAbsent(name, ignored -> new ArrayList<>());
+      if (sessions.stream().noneMatch(session -> session.handler() == handler))
+      {
+        sessions.add(new RunningSession(handler, mode));
+      }
+      refreshCardsForConfiguration(name);
+      refreshAggregateActionState();
+    });
+  }
+
+  /**
+   * Performs the session not started operation.
+   *
+   * @param environment the environment
+   */
+  private void sessionNotStarted(ExecutionEnvironment environment)
+  {
+    RunnerAndConfigurationSettings settings = environment.getRunnerAndConfigurationSettings();
+    if (settings == null)
+    {
+      return;
+    }
+    ApplicationManager.getApplication().invokeLater(() ->
+    {
+      clearStarting(settings.getName());
+    });
+  }
+
+  /**
+   * Performs the session terminated operation.
+   *
+   * @param environment the environment
+   * @param handler the handler
+   */
+  private void sessionTerminated(ExecutionEnvironment environment, ProcessHandler handler)
+  {
+    RunnerAndConfigurationSettings settings = environment.getRunnerAndConfigurationSettings();
+    if (settings == null)
+    {
+      return;
+    }
+    ApplicationManager.getApplication().invokeLater(() ->
+    {
+      String name = settings.getName();
+      List<RunningSession> sessions = runningSessions.get(name);
+      if (sessions != null)
+      {
+        sessions.removeIf(session -> session.handler() == handler);
+        if (sessions.isEmpty())
+        {
+          runningSessions.remove(name);
+        }
+      }
+      refreshCardsForConfiguration(name);
+      refreshAggregateActionState();
+      if (!isRunning(name) && pendingRestarts.containsKey(name))
+      {
+        ExecutionMode mode = pendingRestarts.remove(name);
+        RunnerAndConfigurationSettings configuration = availableByName.get(name);
+        if (configuration != null)
+        {
+          launch(configuration, mode);
+        }
+      }
+    });
+  }
+
+  /**
+   * Rebuilds the later.
+   */
+  private void rebuildLater()
+  {
+    if (!rebuildScheduled.compareAndSet(false, true))
+    {
+      return;
+    }
+    ApplicationManager.getApplication().invokeLater(() ->
+    {
+      rebuildScheduled.set(false);
+      if (!project.isDisposed())
+      {
         rebuild();
+      }
+    });
+  }
+
+  /**
+   * Refreshes the cards for configuration.
+   *
+   * @param configurationName the configuration name
+   */
+  private void refreshCardsForConfiguration(String configurationName)
+  {
+    ServiceCard card = cardsByConfiguration.get(configurationName);
+    if (card != null)
+    {
+      card.refreshState();
     }
+  }
 
-    private JPanel createToolbar() {
-        JPanel toolbar = new JPanel(new BorderLayout());
-        toolbar.setOpaque(false);
-        toolbar.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-
-        JButton edit = iconButton(AllIcons.Actions.Edit, "Customize services");
-        edit.addActionListener(e -> editAppearances());
-        toolbar.add(edit, BorderLayout.WEST);
-
-        JPanel launchActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        launchActions.setOpaque(false);
-        runButton = iconButton(AllIcons.Actions.Execute, "Run selected services that are not already running");
-        runButton.addActionListener(e -> startMissingSelected(false));
-        debugButton = iconButton(AllIcons.Actions.StartDebugger, "Debug selected services that are not already running");
-        debugButton.addActionListener(e -> startMissingSelected(true));
-        restartAllButton = iconButton(AllIcons.Actions.Restart, "Start missing and restart all running selected services");
-        restartAllButton.addActionListener(e -> restartSelected());
-        stopAllButton = iconButton(AllIcons.Actions.StopRefresh, "Stop all services running from this launcher");
-        stopAllButton.addActionListener(e -> stopAllServices());
-        launchActions.add(runButton);
-        launchActions.add(debugButton);
-        launchActions.add(restartAllButton);
-        launchActions.add(stopAllButton);
-        toolbar.add(launchActions, BorderLayout.EAST);
-        refreshAggregateActionState();
-        return toolbar;
+  /**
+   * Refreshes the aggregate action state.
+   */
+  private void refreshAggregateActionState()
+  {
+    boolean anyRunning = !runningSessions.isEmpty();
+    if (restartAllButton != null && restartAllButton.isEnabled() != anyRunning)
+    {
+      restartAllButton.setEnabled(anyRunning);
     }
-
-    private JButton iconButton(Icon icon, String tooltip) {
-        return new HoverIconButton(icon, tooltip, 34, 30);
+    if (stopAllButton != null && stopAllButton.isEnabled() != anyRunning)
+    {
+      stopAllButton.setEnabled(anyRunning);
     }
+    refreshLaunchActionState();
+  }
 
-    private void rebuild() {
-        cards.clear();
-        cardsByConfiguration.clear();
-        groupsPanel.removeAll();
+  /**
+   * Refreshes the launch action state.
+   */
+  private void refreshLaunchActionState()
+  {
+    if (runButton == null || debugButton == null)
+    {
+      return;
+    }
+    boolean hasPendingService = false;
+    boolean hasStartableService = false;
+    for (String itemId : selected)
+    {
+      ServiceCard card = cards.get(itemId);
+      if (card == null || card.settings == null
+        || card.launcherConfiguration.configurationName == null || card.launcherConfiguration.configurationName.isBlank())
+        {
+        continue;
+        }
+      String configurationName = card.launcherConfiguration.configurationName;
+      boolean pending = pendingStarts.contains(configurationName);
+      hasPendingService |= pending;
+      hasStartableService |= !pending && !isRunning(configurationName);
+      if (hasPendingService && hasStartableService)
+      {
+        break;
+      }
+    }
+    boolean showStarting = hasPendingService && !hasStartableService;
+    StartActionState state = new StartActionState(showStarting, hasStartableService);
+    updateStartButton(
+      runButton,
+      new StartButtonPresentation(
+        AllIcons.Actions.Execute,
+        "Run selected services that are not already running"
+      ),
+      state
+    );
+    updateStartButton(
+      debugButton,
+      new StartButtonPresentation(
+        AllIcons.Actions.StartDebugger,
+        "Debug selected services that are not already running"
+      ),
+      state
+    );
+  }
 
-        Map<String, RunnerAndConfigurationSettings> available = availableConfigurations();
-        ServiceLauncherSettings launcherSettings = ServiceLauncherSettings.getInstance(project);
-        List<ServiceLauncherSettings.ServiceAppearance> appearances =
-            launcherSettings.reconciledWith(new ArrayList<>(available.keySet()));
-        availableByName = available;
-        currentAppearances = appearances;
-        Map<String, ServiceLauncherSettings.ServiceAppearance> byId = new HashMap<>();
-        appearances.forEach(item -> byId.put(item.itemId, item));
-        appearancesById = byId;
-        Map<String, List<ServiceLauncherSettings.ServiceAppearance>> groups = new LinkedHashMap<>();
-        launcherSettings.groupNames().forEach(group -> groups.put(group, new ArrayList<>()));
-        appearances.stream()
-            .filter(item -> item.visible)
-            .forEach(item -> groups.computeIfAbsent(ServiceLauncherSettings.normalizeGroup(item.group), ignored -> new ArrayList<>())
-                .add(item));
+  /**
+   * Updates the start button.
+   *
+   * @param button the button
+   * @param presentation the presentation
+   * @param state the state
+   */
+  private void updateStartButton(
+    JButton button,
+    StartButtonPresentation presentation,
+    StartActionState state
+  )
+  {
+    boolean wasStarting = Boolean.TRUE.equals(button.getClientProperty("serviceLauncher.starting"));
+    if (wasStarting != state.starting())
+    {
+      button.putClientProperty("serviceLauncher.starting", state.starting());
+      button.setIcon(state.starting() ? startingIcon : presentation.icon());
+      button.setDisabledIcon(
+        state.starting() ? startingIcon : IconLoader.getDisabledIcon(presentation.icon())
+      );
+    }
+    String tooltip = state.starting() ? "Starting selected services…" : presentation.tooltip();
+    if (!tooltip.equals(button.getToolTipText()))
+    {
+      button.setToolTipText(tooltip);
+    }
+    if (button.isEnabled() != state.isEnabled())
+    {
+      button.setEnabled(state.isEnabled());
+    }
+  }
 
-        if (groups.isEmpty()) {
-            JBLabel emptyState = new JBLabel(
-                "<html><div style='text-align:center'>No services or groups yet.<br>" +
-                    "Right-click here to create a launcher configuration or group.</div></html>",
-                SwingConstants.CENTER
+  /** {@inheritDoc} */
+  @Override
+  public void dispose()
+  {
+    startingAnimationTimer.stop();
+  }
+
+  /**
+   * Represents a service card.
+   */
+  private final class ServiceCard extends JLayeredPane
+  {
+    private final ServiceLauncherSettings.LauncherConfiguration launcherConfiguration;
+    private final RunnerAndConfigurationSettings settings;
+    private final JPanel content = new JPanel(new BorderLayout(5, 0));
+    private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 1, 0));
+    private final JBLabel linkWarning = new JBLabel(AllIcons.General.Warning);
+    private final JButton run;
+    private final JButton debug;
+    private final JButton restart;
+    private final JButton stop;
+    private final JBLabel serviceIcon;
+    private final JBLabel nameLabel;
+    private final Color normalTextColor;
+
+    /**
+     * Creates a new {@code ServiceCard} instance.
+     *
+     * @param launcherConfiguration the launcher configuration
+     * @param settings the settings
+     */
+    private ServiceCard(ServiceLauncherSettings.LauncherConfiguration launcherConfiguration,
+              RunnerAndConfigurationSettings settings)
+              {
+      this.launcherConfiguration = launcherConfiguration;
+      this.settings = settings;
+      setOpaque(true);
+      setBackground(CARD_BACKGROUND);
+      setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+      setPreferredSize(new Dimension(MIN_CARD_WIDTH, 48));
+      setMinimumSize(new Dimension(140, 44));
+
+      Icon launcherIcon = LauncherIcons.get(launcherConfiguration);
+      serviceIcon = new JBLabel(launcherIcon);
+      serviceIcon.setDisabledIcon(IconLoader.getDisabledIcon(launcherIcon));
+      serviceIcon.setVerticalAlignment(SwingConstants.CENTER);
+      serviceIcon.setBorder(BorderFactory.createEmptyBorder(0, 9, 0, 0));
+      content.add(serviceIcon, BorderLayout.WEST);
+
+      String linkedOrExpectedName = launcherConfiguration.configurationName == null
+        || launcherConfiguration.configurationName.isBlank()
+        ? launcherConfiguration.expectedConfigurationName
+        : launcherConfiguration.configurationName;
+      String cardName = launcherConfiguration.displayName == null || launcherConfiguration.displayName.isBlank()
+        ? (linkedOrExpectedName == null || linkedOrExpectedName.isBlank() ? "Unlinked service" : linkedOrExpectedName)
+        : launcherConfiguration.displayName;
+      nameLabel = new JBLabel(toHtml(cardName), SwingConstants.CENTER);
+      nameLabel.setVerticalAlignment(SwingConstants.CENTER);
+      nameLabel.setFont(nameLabel.getFont().deriveFont(Font.PLAIN, nameLabel.getFont().getSize2D()));
+      nameLabel.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 5));
+      normalTextColor = nameLabel.getForeground();
+      content.add(nameLabel, BorderLayout.CENTER);
+      content.setOpaque(false);
+      add(content, JLayeredPane.DEFAULT_LAYER);
+
+      actions.setOpaque(false);
+      run = compactButton(AllIcons.Actions.Execute, "Run " + cardName);
+      run.addActionListener(actionEvent -> startService(launcherConfiguration.configurationName, ExecutionMode.RUN));
+      debug = compactButton(AllIcons.Actions.StartDebugger, "Debug " + cardName);
+      debug.addActionListener(actionEvent -> startService(launcherConfiguration.configurationName, ExecutionMode.DEBUG));
+      restart = compactButton(AllIcons.Actions.Restart, "Restart " + cardName);
+      restart.addActionListener(actionEvent -> restartService(launcherConfiguration.configurationName));
+      stop = compactButton(AllIcons.Actions.StopRefresh, "Stop " + cardName);
+      stop.addActionListener(actionEvent -> stopService(launcherConfiguration.configurationName));
+      actions.add(run);
+      actions.add(debug);
+      actions.add(restart);
+      actions.add(stop);
+      add(actions, JLayeredPane.PALETTE_LAYER);
+      String expectedName = launcherConfiguration.expectedConfigurationName == null
+        ? ""
+        : launcherConfiguration.expectedConfigurationName;
+      linkWarning.setToolTipText(expectedName.isBlank()
+        ? "This item is not linked to a run configuration. Right-click to connect it."
+        : "Run configuration '" + expectedName + "' was not found. Right-click to reconnect it.");
+      linkWarning.setVisible(settings == null);
+      add(linkWarning, JLayeredPane.PALETTE_LAYER);
+
+      MouseAdapter listener = new MouseAdapter()
+      {
+        private boolean selectionArmed;
+
+        /** {@inheritDoc} */
+        @Override
+        public void mousePressed(MouseEvent event)
+        {
+          maybeShowPopup(event);
+          if (SwingUtilities.isLeftMouseButton(event))
+          {
+            selectionArmed = true;
+          }
+        }
+
+        /** {@inheritDoc} */
+        @Override
+        public void mouseReleased(MouseEvent event)
+        {
+          maybeShowPopup(event);
+          if (selectionArmed && SwingUtilities.isLeftMouseButton(event))
+          {
+            selectionArmed = false;
+            Point releasePoint = SwingUtilities.convertPoint(
+              event.getComponent(), event.getPoint(), ServiceCard.this
             );
-            emptyState.setAlignmentX(Component.CENTER_ALIGNMENT);
-            groupsPanel.add(Box.createVerticalGlue());
-            groupsPanel.add(emptyState);
-            groupsPanel.add(Box.createVerticalGlue());
-        } else {
-            for (Map.Entry<String, List<ServiceLauncherSettings.ServiceAppearance>> entry : groups.entrySet()) {
-                ResponsiveGroupPanel group = new ResponsiveGroupPanel(entry.getKey(), entry.getValue(), available);
-                group.setAlignmentX(Component.LEFT_ALIGNMENT);
-                groupsPanel.add(group);
-                groupsPanel.add(Box.createVerticalStrut(14));
+            if (contains(releasePoint))
+            {
+              toggleSelection();
             }
-            groupsPanel.add(Box.createVerticalGlue());
+          }
+          else
+          {
+            selectionArmed = false;
+          }
         }
 
-        selected.retainAll(cards.keySet());
-        pendingStarts.retainAll(available.keySet());
-        synchronizeStartingAnimation();
-        refreshAggregateActionState();
-        groupsPanel.revalidate();
-        groupsPanel.repaint();
-    }
+        /** {@inheritDoc} */
+        @Override
+        public void mouseExited(MouseEvent event)
+        {
+          Point pointer = SwingUtilities.convertPoint(
+            event.getComponent(), event.getPoint(), ServiceCard.this
+          );
+          if (!contains(pointer) && (event.getModifiersEx() & MouseEvent.BUTTON1_DOWN_MASK) == 0)
+          {
+            selectionArmed = false;
+          }
+        }
+      };
+      addMouseListener(listener);
+      content.addMouseListener(listener);
+      nameLabel.addMouseListener(listener);
+      serviceIcon.addMouseListener(listener);
+      refreshState();
+              }
 
-    private List<ServiceLauncherSettings.ServiceAppearance> appearances() {
-        return currentAppearances;
-    }
-
-    private Map<String, RunnerAndConfigurationSettings> availableConfigurations() {
-        Map<String, RunnerAndConfigurationSettings> result = new LinkedHashMap<>();
-        RunManager.getInstance(project).getAllSettings().stream()
-            .filter(settings -> !settings.isTemporary())
-            .sorted(Comparator.comparing(RunnerAndConfigurationSettings::getName, String.CASE_INSENSITIVE_ORDER))
-            .forEach(settings -> result.put(settings.getName(), settings));
-        return result;
-    }
-
-    private void selectAll() {
-        selected.addAll(cards.keySet());
-        cards.values().forEach(ServiceCard::refreshBorder);
-        refreshLaunchActionState();
-    }
-
-    private void selectNone() {
-        selected.clear();
-        cards.values().forEach(ServiceCard::refreshBorder);
-        refreshLaunchActionState();
-    }
-
-    private void installSelectionPopup(JComponent component) {
-        component.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent event) {
-                showSelectionPopup(event);
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent event) {
-                showSelectionPopup(event);
-            }
-        });
-    }
-
-    private void showSelectionPopup(MouseEvent event) {
-        if (!event.isPopupTrigger()) {
-            return;
-        }
-        JPopupMenu menu = new JPopupMenu();
-        JMenuItem addService = new JMenuItem("Add service…");
-        addService.addActionListener(e -> createService(null));
-        JMenuItem addGroup = new JMenuItem("Add group…");
-        addGroup.addActionListener(e -> createGroup());
-        menu.add(addService);
-        menu.add(addGroup);
-        menu.addSeparator();
-        JMenuItem selectAllItem = new JMenuItem("Select all visible services");
-        selectAllItem.addActionListener(e -> selectAll());
-        JMenuItem selectNoneItem = new JMenuItem("Clear selection");
-        selectNoneItem.addActionListener(e -> selectNone());
-        menu.add(selectAllItem);
-        menu.add(selectNoneItem);
-        menu.show((Component) event.getSource(), event.getX(), event.getY());
-    }
-
-    private void startMissingSelected(boolean debug) {
-        if (selected.isEmpty()) {
-            Messages.showInfoMessage(project, "Select one or more service cards first.", "Service Launcher");
-            return;
-        }
-        Map<String, RunnerAndConfigurationSettings> available = availableByName;
-        List<RunnerAndConfigurationSettings> toStart = selected.stream()
-            .map(appearancesById::get)
-            .filter(item -> item != null && item.configurationName != null && !item.configurationName.isBlank())
-            .filter(item -> !isRunning(item.configurationName) && !pendingStarts.contains(item.configurationName))
-            .map(item -> available.get(item.configurationName))
-            .filter(settings -> settings != null)
-            .toList();
-        markStarting(toStart.stream().map(RunnerAndConfigurationSettings::getName).toList());
-        toStart.forEach(settings -> launch(settings, debug));
-    }
-
-    private void restartSelected() {
-        if (selected.isEmpty()) {
-            Messages.showInfoMessage(project, "Select one or more service cards first.", "Service Launcher");
-            return;
-        }
-        for (String itemId : new ArrayList<>(selected)) {
-            ServiceLauncherSettings.ServiceAppearance item = appearancesById.get(itemId);
-            if (item != null && item.configurationName != null && !item.configurationName.isBlank()) {
-                restartService(item.configurationName);
-            }
-        }
-    }
-
-    private void restartService(String configurationName) {
-        RunnerAndConfigurationSettings settings = availableByName.get(configurationName);
-        if (settings == null) {
-            return;
-        }
-        List<RunningSession> sessions = runningSessions.get(configurationName);
-        if (sessions == null || sessions.isEmpty()) {
-            launch(settings, false);
-            return;
-        }
-        boolean debug = sessions.stream().anyMatch(session -> session.debug);
-        pendingRestarts.put(configurationName, debug);
-        sessions.stream().map(session -> session.handler).distinct().forEach(this::stopHandler);
-    }
-
-    private void stopService(String configurationName) {
-        pendingRestarts.remove(configurationName);
-        List<RunningSession> sessions = runningSessions.get(configurationName);
-        if (sessions != null) {
-            sessions.stream().map(session -> session.handler).distinct().forEach(this::stopHandler);
-        }
-    }
-
-    private void stopAllServices() {
-        pendingRestarts.clear();
-        runningSessions.values().stream().flatMap(List::stream).map(session -> session.handler).distinct()
-            .forEach(this::stopHandler);
-    }
-
-    private void stopHandler(ProcessHandler handler) {
-        if (!handler.isProcessTerminated() && !handler.isProcessTerminating()) {
-            handler.destroyProcess();
-        }
-    }
-
-    private boolean isRunning(String configurationName) {
-        if (configurationName == null || configurationName.isBlank()) {
-            return false;
-        }
-        List<RunningSession> sessions = runningSessions.get(configurationName);
-        return sessions != null && !sessions.isEmpty();
-    }
-
-    private void launch(RunnerAndConfigurationSettings settings, boolean debug) {
-        markStarting(List.of(settings.getName()));
-        ProgramRunnerUtil.executeConfiguration(
-            settings,
-            debug ? DefaultDebugExecutor.getDebugExecutorInstance() : DefaultRunExecutor.getRunExecutorInstance()
-        );
-    }
-
-    private void markStarting(List<String> configurationNames) {
-        boolean changed = false;
-        for (String configurationName : configurationNames) {
-            if (pendingStarts.add(configurationName)) {
-                changed = true;
-                refreshCardsForConfiguration(configurationName);
-            }
-        }
-        if (changed) {
-            synchronizeStartingAnimation();
-            refreshLaunchActionState();
-        }
-    }
-
-    private void clearStarting(String configurationName) {
-        if (pendingStarts.remove(configurationName)) {
-            refreshCardsForConfiguration(configurationName);
-            synchronizeStartingAnimation();
-            refreshLaunchActionState();
-        }
-    }
-
-    private void synchronizeStartingAnimation() {
-        if (pendingStarts.isEmpty()) {
-            startingAnimationTimer.stop();
-            startingAnimationOffset = 0;
-            lastStartingAnimationFrameNanos = 0;
-        } else if (!startingAnimationTimer.isRunning()) {
-            lastStartingAnimationFrameNanos = System.nanoTime();
-            startingAnimationTimer.start();
-        }
-    }
-
-    private void advanceStartingAnimation() {
-        long now = System.nanoTime();
-        float elapsedSeconds = (now - lastStartingAnimationFrameNanos) / 1_000_000_000f;
-        lastStartingAnimationFrameNanos = now;
-        startingAnimationOffset += elapsedSeconds * STARTING_ANIMATION_SPEED_PX_PER_SECOND;
-        for (String configurationName : pendingStarts) {
-            ServiceCard card = cardsByConfiguration.get(configurationName);
-            if (card != null) {
-                card.repaint();
-            }
-        }
-    }
-
-    private void editAppearances() {
-        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
-        ServiceLauncherSettingsDialog dialog = new ServiceLauncherSettingsDialog(project, current);
-        if (dialog.showAndGet()) {
-            ServiceLauncherSettings.getInstance(project).replaceWith(dialog.result());
-            rebuild();
-        }
-    }
-
-    private void editAppearance(ServiceLauncherSettings.ServiceAppearance source) {
-        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
-        Set<String> groups = new LinkedHashSet<>();
-        current.forEach(item -> groups.add(ServiceLauncherSettings.normalizeGroup(item.group)));
-        int maxOrder = current.size();
-        ServiceAppearanceDialog dialog = new ServiceAppearanceDialog(
-            project, source, groups, availableByName.keySet(), maxOrder
-        );
-        if (dialog.showAndGet()) {
-            applyEditedAppearance(current, dialog.result());
-            ServiceLauncherSettings.getInstance(project).replaceWith(current);
-            rebuild();
-        }
-    }
-
-    private void createService(String initialGroup) {
-        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
-        List<String> groups = groupNames();
-        String group = initialGroup == null
-            ? (groups.isEmpty() ? ServiceLauncherSettings.DEFAULT_GROUP : groups.get(0))
-            : initialGroup;
-        ServiceLauncherSettings.ServiceAppearance created =
-            new ServiceLauncherSettings.ServiceAppearance("", (int) current.stream()
-                .filter(item -> group.equals(ServiceLauncherSettings.normalizeGroup(item.group)))
-                .count());
-        created.group = group;
-        created.visible = true;
-        ServiceAppearanceDialog dialog = new ServiceAppearanceDialog(
-            project, created, groups, availableByName.keySet(), current.size() + 1, true
-        );
-        if (dialog.showAndGet()) {
-            ServiceLauncherSettings.ServiceAppearance result = dialog.result();
-            applyEditedAppearance(current, result);
-            ServiceLauncherSettings.getInstance(project).replaceWith(current);
-            rebuild();
-        }
-    }
-
-    private void createGroup() {
-        String requested = Messages.showInputDialog(
-            project,
-            "Enter a name for the new group:",
-            "Create Group",
-            Messages.getQuestionIcon()
-        );
-        if (requested == null) {
-            return;
-        }
-        String group = requested.trim();
-        if (group.isEmpty()) {
-            Messages.showErrorDialog(project, "The group name cannot be empty.", "Create Group");
-            return;
-        }
-        if (!ServiceLauncherSettings.getInstance(project).addGroup(group)) {
-            Messages.showErrorDialog(project, "A group with that name already exists.", "Create Group");
-            return;
-        }
-        rebuild();
-    }
-
-    private void removeService(ServiceLauncherSettings.ServiceAppearance service) {
-        String name = service.displayName == null || service.displayName.isBlank()
-            ? (service.configurationName == null || service.configurationName.isBlank()
-                ? "this launcher configuration"
-                : service.configurationName)
-            : service.displayName;
-        int choice = Messages.showYesNoDialog(
-            project,
-            "Delete the launcher configuration '" + name + "'?",
-            "Delete Launcher Configuration",
-            "Delete",
-            "Cancel",
-            Messages.getWarningIcon()
-        );
-        if (choice != Messages.YES) {
-            return;
-        }
-        selected.remove(service.itemId);
-        if (ServiceLauncherSettings.getInstance(project).removeService(service.itemId)) {
-            rebuild();
-        }
-    }
-
-    private void applyEditedAppearance(List<ServiceLauncherSettings.ServiceAppearance> current,
-                                       ServiceLauncherSettings.ServiceAppearance edited) {
-        if (edited.configurationName != null && !edited.configurationName.isBlank()) {
-            for (ServiceLauncherSettings.ServiceAppearance item : current) {
-                if (!item.itemId.equals(edited.itemId)
-                    && edited.configurationName.equals(item.configurationName)) {
-                    item.expectedConfigurationName = item.configurationName;
-                    item.configurationName = "";
-                }
-            }
-        }
-        current.removeIf(item -> item.itemId.equals(edited.itemId));
-        String targetGroup = ServiceLauncherSettings.normalizeGroup(edited.group);
-        int insertionIndex = current.size();
-        int seenInGroup = 0;
-        for (int i = 0; i < current.size(); i++) {
-            ServiceLauncherSettings.ServiceAppearance item = current.get(i);
-            if (targetGroup.equals(ServiceLauncherSettings.normalizeGroup(item.group))) {
-                if (seenInGroup == edited.order) {
-                    insertionIndex = i;
-                    break;
-                }
-                insertionIndex = i + 1;
-                seenInGroup++;
-            }
-        }
-        current.add(insertionIndex, edited);
-        ServiceLauncherSettings.normalizeOrders(current);
-    }
-
-    private void moveWithinGroup(ServiceLauncherSettings.ServiceAppearance source, int delta) {
-        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
-        List<ServiceLauncherSettings.ServiceAppearance> group = current.stream()
-            .filter(item -> ServiceLauncherSettings.normalizeGroup(item.group)
-                .equals(ServiceLauncherSettings.normalizeGroup(source.group)))
-            .sorted(Comparator.comparingInt(item -> item.order))
-            .toList();
-        int index = -1;
-        for (int i = 0; i < group.size(); i++) {
-            if (group.get(i).itemId.equals(source.itemId)) {
-                index = i;
-                break;
-            }
-        }
-        int target = index + delta;
-        if (index < 0 || target < 0 || target >= group.size()) {
-            return;
-        }
-        int oldOrder = group.get(index).order;
-        group.get(index).order = group.get(target).order;
-        group.get(target).order = oldOrder;
-        ServiceLauncherSettings.normalizeOrders(current);
-        rebuild();
-    }
-
-    private void moveToGroup(ServiceLauncherSettings.ServiceAppearance source, String group) {
-        ServiceLauncherSettings.ServiceAppearance edited = source.copy();
-        edited.group = group;
-        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
-        edited.order = (int) current.stream()
-            .filter(item -> ServiceLauncherSettings.normalizeGroup(item.group).equals(group)).count();
-        applyEditedAppearance(current, edited);
-        ServiceLauncherSettings.getInstance(project).replaceWith(current);
-        rebuild();
-    }
-
-    private void renameGroup(String sourceGroup) {
-        String requested = Messages.showInputDialog(
-            project,
-            "Enter a new name for the group:",
-            "Rename Group",
-            Messages.getQuestionIcon(),
-            sourceGroup,
-            null
-        );
-        if (requested == null) {
-            return;
-        }
-        String targetGroup = requested.trim();
-        if (targetGroup.isEmpty()) {
-            Messages.showErrorDialog(project, "The group name cannot be empty.", "Rename Group");
-            return;
-        }
-        if (sourceGroup.equals(targetGroup)) {
-            return;
-        }
-        ServiceLauncherSettings settings = ServiceLauncherSettings.getInstance(project);
-        if (!settings.renameGroup(sourceGroup, targetGroup)) {
-            Messages.showErrorDialog(project, "A group with that name already exists.", "Rename Group");
-            return;
-        }
-        rebuild();
-    }
-
-    private void moveGroup(String sourceGroup, int delta) {
-        if (ServiceLauncherSettings.getInstance(project).moveGroup(sourceGroup, delta)) {
-            rebuild();
-        }
-    }
-
-    private void removeGroup(String group) {
-        if (ServiceLauncherSettings.getInstance(project).removeGroup(group)) {
-            rebuild();
-        }
-    }
-
-    private List<String> groupNames() {
-        return ServiceLauncherSettings.getInstance(project).groupNames();
-    }
-
-    private void installGroupPopup(JComponent component, String group) {
-        component.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent event) {
-                showGroupPopup(event, group);
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent event) {
-                showGroupPopup(event, group);
-            }
-        });
-    }
-
-    private void showGroupPopup(MouseEvent event, String group) {
-        if (!event.isPopupTrigger()) {
-            return;
-        }
-        List<String> groups = groupNames();
-        int groupIndex = groups.indexOf(group);
-        JPopupMenu menu = new JPopupMenu();
-        JMenuItem addService = new JMenuItem("Add service to group…");
-        addService.addActionListener(e -> createService(group));
-        JMenuItem addGroup = new JMenuItem("Add group…");
-        addGroup.addActionListener(e -> createGroup());
-        menu.add(addService);
-        menu.add(addGroup);
-        menu.addSeparator();
-        JMenuItem rename = new JMenuItem("Rename group…", AllIcons.Actions.Edit);
-        rename.addActionListener(e -> renameGroup(group));
-        JMenuItem moveUp = new JMenuItem("Move group up");
-        moveUp.setEnabled(groupIndex > 0);
-        moveUp.addActionListener(e -> moveGroup(group, -1));
-        JMenuItem moveDown = new JMenuItem("Move group down");
-        moveDown.setEnabled(groupIndex >= 0 && groupIndex < groups.size() - 1);
-        moveDown.addActionListener(e -> moveGroup(group, 1));
-        JMenuItem remove = new JMenuItem("Remove empty group");
-        remove.setEnabled(appearances().stream()
-            .noneMatch(item -> group.equalsIgnoreCase(ServiceLauncherSettings.normalizeGroup(item.group))));
-        remove.addActionListener(e -> removeGroup(group));
-        menu.add(rename);
-        menu.add(moveUp);
-        menu.add(moveDown);
-        menu.add(remove);
-        menu.addSeparator();
-        JMenuItem selectAllItem = new JMenuItem("Select all visible services");
-        selectAllItem.addActionListener(e -> selectAll());
-        JMenuItem selectNoneItem = new JMenuItem("Clear selection");
-        selectNoneItem.addActionListener(e -> selectNone());
-        menu.add(selectAllItem);
-        menu.add(selectNoneItem);
-        menu.show((Component) event.getSource(), event.getX(), event.getY());
-    }
-
-    private void sessionStarted(String executorId, ExecutionEnvironment environment, ProcessHandler handler) {
-        RunnerAndConfigurationSettings settings = environment.getRunnerAndConfigurationSettings();
-        if (settings == null) {
-            return;
-        }
-        ApplicationManager.getApplication().invokeLater(() -> {
-            String name = settings.getName();
-            clearStarting(name);
-            if (!cardsByConfiguration.containsKey(name)) {
-                refreshLaunchActionState();
-                return;
-            }
-            boolean debug = DefaultDebugExecutor.getDebugExecutorInstance().getId().equals(executorId);
-            List<RunningSession> sessions = runningSessions.computeIfAbsent(name, ignored -> new ArrayList<>());
-            if (sessions.stream().noneMatch(session -> session.handler == handler)) {
-                sessions.add(new RunningSession(handler, debug));
-            }
-            refreshCardsForConfiguration(name);
-            refreshAggregateActionState();
-        });
-    }
-
-    private void sessionNotStarted(ExecutionEnvironment environment) {
-        RunnerAndConfigurationSettings settings = environment.getRunnerAndConfigurationSettings();
-        if (settings == null) {
-            return;
-        }
-        ApplicationManager.getApplication().invokeLater(() -> {
-            clearStarting(settings.getName());
-        });
-    }
-
-    private void sessionTerminated(ExecutionEnvironment environment, ProcessHandler handler) {
-        RunnerAndConfigurationSettings settings = environment.getRunnerAndConfigurationSettings();
-        if (settings == null) {
-            return;
-        }
-        ApplicationManager.getApplication().invokeLater(() -> {
-            String name = settings.getName();
-            List<RunningSession> sessions = runningSessions.get(name);
-            if (sessions != null) {
-                sessions.removeIf(session -> session.handler == handler);
-                if (sessions.isEmpty()) {
-                    runningSessions.remove(name);
-                }
-            }
-            refreshCardsForConfiguration(name);
-            refreshAggregateActionState();
-            if (!isRunning(name) && pendingRestarts.containsKey(name)) {
-                boolean debug = pendingRestarts.remove(name);
-                RunnerAndConfigurationSettings configuration = availableByName.get(name);
-                if (configuration != null) {
-                    launch(configuration, debug);
-                }
-            }
-        });
-    }
-
-    private void rebuildLater() {
-        if (!rebuildScheduled.compareAndSet(false, true)) {
-            return;
-        }
-        ApplicationManager.getApplication().invokeLater(() -> {
-            rebuildScheduled.set(false);
-            if (!project.isDisposed()) {
-                rebuild();
-            }
-        });
-    }
-
-    private void refreshCardsForConfiguration(String configurationName) {
-        ServiceCard card = cardsByConfiguration.get(configurationName);
-        if (card != null) {
-            card.refreshState();
-        }
-    }
-
-    private void refreshAggregateActionState() {
-        boolean anyRunning = !runningSessions.isEmpty();
-        if (restartAllButton != null && restartAllButton.isEnabled() != anyRunning) {
-            restartAllButton.setEnabled(anyRunning);
-        }
-        if (stopAllButton != null && stopAllButton.isEnabled() != anyRunning) {
-            stopAllButton.setEnabled(anyRunning);
-        }
-        refreshLaunchActionState();
-    }
-
-    private void refreshLaunchActionState() {
-        if (runButton == null || debugButton == null) {
-            return;
-        }
-        boolean hasPendingService = false;
-        boolean hasStartableService = false;
-        for (String itemId : selected) {
-            ServiceCard card = cards.get(itemId);
-            if (card == null || card.settings == null
-                || card.appearance.configurationName == null || card.appearance.configurationName.isBlank()) {
-                continue;
-            }
-            String configurationName = card.appearance.configurationName;
-            boolean pending = pendingStarts.contains(configurationName);
-            hasPendingService |= pending;
-            hasStartableService |= !pending && !isRunning(configurationName);
-            if (hasPendingService && hasStartableService) {
-                break;
-            }
-        }
-        boolean showStarting = hasPendingService && !hasStartableService;
-        updateStartButton(runButton, AllIcons.Actions.Execute, showStarting, hasStartableService,
-            "Run selected services that are not already running");
-        updateStartButton(debugButton, AllIcons.Actions.StartDebugger, showStarting, hasStartableService,
-            "Debug selected services that are not already running");
-    }
-
-    private void updateStartButton(JButton button, Icon normalIcon, boolean starting, boolean canStart,
-                                   String normalTooltip) {
-        boolean wasStarting = Boolean.TRUE.equals(button.getClientProperty("serviceLauncher.starting"));
-        if (wasStarting != starting) {
-            button.putClientProperty("serviceLauncher.starting", starting);
-            button.setIcon(starting ? startingIcon : normalIcon);
-            button.setDisabledIcon(starting ? startingIcon : IconLoader.getDisabledIcon(normalIcon));
-        }
-        String tooltip = starting ? "Starting selected services…" : normalTooltip;
-        if (!tooltip.equals(button.getToolTipText())) {
-            button.setToolTipText(tooltip);
-        }
-        boolean enabled = !starting && canStart;
-        if (button.isEnabled() != enabled) {
-            button.setEnabled(enabled);
-        }
-    }
-
+    /** {@inheritDoc} */
     @Override
-    public void dispose() {
-        startingAnimationTimer.stop();
+    public void doLayout()
+    {
+      content.setBounds(0, 0, getWidth(), getHeight());
+      Dimension actionSize = actions.getPreferredSize();
+      actions.setBounds(Math.max(2, getWidth() - actionSize.width - 2), 2, actionSize.width, actionSize.height);
+      Dimension warningSize = linkWarning.getPreferredSize();
+      linkWarning.setBounds(2, 2, warningSize.width, warningSize.height);
     }
 
-    private final class ResponsiveGroupPanel extends JPanel {
-        private final JPanel cardGrid = new JPanel();
-        private int columns = 0;
+    /**
+     * Performs the maybe show popup operation.
+     *
+     * @param event the event
+     */
+    private void maybeShowPopup(MouseEvent event)
+    {
+      if (!event.isPopupTrigger())
+      {
+        return;
+      }
+      JPopupMenu menu = new JPopupMenu();
+      JMenuItem edit = new JMenuItem("Edit launcherConfiguration…", AllIcons.Actions.Edit);
+      edit.addActionListener(actionEvent -> editLauncherConfiguration(launcherConfiguration));
+      menu.add(edit);
+      menu.addSeparator();
 
-        private ResponsiveGroupPanel(String title, List<ServiceLauncherSettings.ServiceAppearance> items,
-                                     Map<String, RunnerAndConfigurationSettings> available) {
-            super(new BorderLayout(0, 6));
-            setOpaque(false);
-            installGroupPopup(this, title);
-            JBLabel heading = new JBLabel(title, SwingConstants.CENTER);
-            heading.setFont(heading.getFont().deriveFont(Font.PLAIN, heading.getFont().getSize2D() + 2));
-            heading.setToolTipText("Right-click to rename or reorder this group");
-            installGroupPopup(heading, title);
-            add(heading, BorderLayout.NORTH);
-            cardGrid.setOpaque(false);
-            installGroupPopup(cardGrid, title);
-            for (ServiceLauncherSettings.ServiceAppearance appearance : items) {
-                ServiceCard card = new ServiceCard(appearance, available.get(appearance.configurationName));
-                cards.put(appearance.itemId, card);
-                if (appearance.configurationName != null && !appearance.configurationName.isBlank()) {
-                    cardsByConfiguration.put(appearance.configurationName, card);
-                }
-                cardGrid.add(card);
-            }
-            add(cardGrid, BorderLayout.CENTER);
-            addComponentListener(new ComponentAdapter() {
-                @Override
-                public void componentResized(ComponentEvent event) {
-                    updateColumns();
-                }
-            });
-            SwingUtilities.invokeLater(this::updateColumns);
-        }
+      JMenuItem moveUp = new JMenuItem("Move up");
+      moveUp.addActionListener(actionEvent -> moveWithinGroup(launcherConfiguration, -1));
+      JMenuItem moveDown = new JMenuItem("Move down");
+      moveDown.addActionListener(actionEvent -> moveWithinGroup(launcherConfiguration, 1));
+      menu.add(moveUp);
+      menu.add(moveDown);
 
-        private void updateColumns() {
-            int usableWidth = Math.max(MIN_CARD_WIDTH, getWidth());
-            int desired = Math.max(1, (usableWidth + CARD_GAP) / (MIN_CARD_WIDTH + CARD_GAP));
-            if (desired != columns) {
-                columns = desired;
-                cardGrid.setLayout(new GridLayout(0, columns, CARD_GAP, CARD_GAP));
-                revalidate();
-            }
-        }
-
-        @Override
-        public Dimension getMaximumSize() {
-            return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
-        }
+      JMenu groups = new JMenu("Move to group");
+      groupNames().stream()
+        .filter(group -> !group.equals(ServiceLauncherSettings.normalizeGroup(launcherConfiguration.group)))
+        .forEach(group ->
+        {
+          JMenuItem target = new JMenuItem(group);
+          target.addActionListener(actionEvent -> moveToGroup(launcherConfiguration, group));
+          groups.add(target);
+        });
+      menu.add(groups);
+      menu.addSeparator();
+      JMenuItem remove = new JMenuItem("Delete launcher configuration…", AllIcons.General.Remove);
+      remove.addActionListener(actionEvent -> removeService(launcherConfiguration));
+      menu.add(remove);
+      menu.addSeparator();
+      JMenuItem selection = new JMenuItem(selected.contains(launcherConfiguration.itemId) ? "Deselect" : "Select");
+      selection.addActionListener(actionEvent -> toggleSelection());
+      menu.add(selection);
+      menu.show((Component) event.getSource(), event.getX(), event.getY());
     }
 
-    private final class ServiceCard extends JLayeredPane {
-        private final ServiceLauncherSettings.ServiceAppearance appearance;
-        private final RunnerAndConfigurationSettings settings;
-        private final JPanel content = new JPanel(new BorderLayout(5, 0));
-        private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 1, 0));
-        private final JBLabel linkWarning = new JBLabel(AllIcons.General.Warning);
-        private final JBLabel serviceIcon;
-        private final JBLabel nameLabel;
-        private final Color normalTextColor;
-
-        private ServiceCard(ServiceLauncherSettings.ServiceAppearance appearance,
-                            RunnerAndConfigurationSettings settings) {
-            this.appearance = appearance;
-            this.settings = settings;
-            setOpaque(true);
-            setBackground(CARD_BACKGROUND);
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            setPreferredSize(new Dimension(MIN_CARD_WIDTH, 48));
-            setMinimumSize(new Dimension(140, 44));
-
-            Icon appearanceIcon = LauncherIcons.get(appearance);
-            serviceIcon = new JBLabel(appearanceIcon);
-            serviceIcon.setDisabledIcon(IconLoader.getDisabledIcon(appearanceIcon));
-            serviceIcon.setVerticalAlignment(SwingConstants.CENTER);
-            serviceIcon.setBorder(BorderFactory.createEmptyBorder(0, 9, 0, 0));
-            content.add(serviceIcon, BorderLayout.WEST);
-
-            String linkedOrExpectedName = appearance.configurationName == null || appearance.configurationName.isBlank()
-                ? appearance.expectedConfigurationName
-                : appearance.configurationName;
-            String cardName = appearance.displayName == null || appearance.displayName.isBlank()
-                ? (linkedOrExpectedName == null || linkedOrExpectedName.isBlank() ? "Unlinked service" : linkedOrExpectedName)
-                : appearance.displayName;
-            nameLabel = new JBLabel(toHtml(cardName), SwingConstants.CENTER);
-            nameLabel.setVerticalAlignment(SwingConstants.CENTER);
-            nameLabel.setFont(nameLabel.getFont().deriveFont(Font.PLAIN, nameLabel.getFont().getSize2D()));
-            nameLabel.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 5));
-            normalTextColor = nameLabel.getForeground();
-            content.add(nameLabel, BorderLayout.CENTER);
-            content.setOpaque(false);
-            add(content, JLayeredPane.DEFAULT_LAYER);
-
-            actions.setOpaque(false);
-            JButton restart = compactButton(AllIcons.Actions.Restart, "Restart " + cardName);
-            restart.addActionListener(e -> restartService(appearance.configurationName));
-            JButton stop = compactButton(AllIcons.Actions.StopRefresh, "Stop " + cardName);
-            stop.addActionListener(e -> stopService(appearance.configurationName));
-            actions.add(restart);
-            actions.add(stop);
-            add(actions, JLayeredPane.PALETTE_LAYER);
-            String expectedName = appearance.expectedConfigurationName == null
-                ? ""
-                : appearance.expectedConfigurationName;
-            linkWarning.setToolTipText(expectedName.isBlank()
-                ? "This item is not linked to a run configuration. Right-click to connect it."
-                : "Run configuration '" + expectedName + "' was not found. Right-click to reconnect it.");
-            linkWarning.setVisible(settings == null);
-            add(linkWarning, JLayeredPane.PALETTE_LAYER);
-
-            MouseAdapter listener = new MouseAdapter() {
-                private boolean selectionArmed;
-
-                @Override
-                public void mousePressed(MouseEvent event) {
-                    maybeShowPopup(event);
-                    if (SwingUtilities.isLeftMouseButton(event)) {
-                        selectionArmed = true;
-                    }
-                }
-
-                @Override
-                public void mouseReleased(MouseEvent event) {
-                    maybeShowPopup(event);
-                    if (selectionArmed && SwingUtilities.isLeftMouseButton(event)) {
-                        selectionArmed = false;
-                        Point releasePoint = SwingUtilities.convertPoint(
-                            event.getComponent(), event.getPoint(), ServiceCard.this
-                        );
-                        if (contains(releasePoint)) {
-                            toggleSelection();
-                        }
-                    } else {
-                        selectionArmed = false;
-                    }
-                }
-
-                @Override
-                public void mouseExited(MouseEvent event) {
-                    Point pointer = SwingUtilities.convertPoint(
-                        event.getComponent(), event.getPoint(), ServiceCard.this
-                    );
-                    if (!contains(pointer) && (event.getModifiersEx() & MouseEvent.BUTTON1_DOWN_MASK) == 0) {
-                        selectionArmed = false;
-                    }
-                }
-            };
-            addMouseListener(listener);
-            content.addMouseListener(listener);
-            nameLabel.addMouseListener(listener);
-            serviceIcon.addMouseListener(listener);
-            refreshState();
-        }
-
-        @Override
-        public void doLayout() {
-            content.setBounds(0, 0, getWidth(), getHeight());
-            Dimension actionSize = actions.getPreferredSize();
-            actions.setBounds(Math.max(2, getWidth() - actionSize.width - 2), 2, actionSize.width, actionSize.height);
-            Dimension warningSize = linkWarning.getPreferredSize();
-            linkWarning.setBounds(2, 2, warningSize.width, warningSize.height);
-        }
-
-        private void maybeShowPopup(MouseEvent event) {
-            if (!event.isPopupTrigger()) {
-                return;
-            }
-            JPopupMenu menu = new JPopupMenu();
-            JMenuItem edit = new JMenuItem("Edit appearance…", AllIcons.Actions.Edit);
-            edit.addActionListener(e -> editAppearance(appearance));
-            menu.add(edit);
-            menu.addSeparator();
-
-            JMenuItem moveUp = new JMenuItem("Move up");
-            moveUp.addActionListener(e -> moveWithinGroup(appearance, -1));
-            JMenuItem moveDown = new JMenuItem("Move down");
-            moveDown.addActionListener(e -> moveWithinGroup(appearance, 1));
-            menu.add(moveUp);
-            menu.add(moveDown);
-
-            JMenu groups = new JMenu("Move to group");
-            groupNames().stream()
-                .filter(group -> !group.equals(ServiceLauncherSettings.normalizeGroup(appearance.group)))
-                .forEach(group -> {
-                    JMenuItem target = new JMenuItem(group);
-                    target.addActionListener(e -> moveToGroup(appearance, group));
-                    groups.add(target);
-                });
-            menu.add(groups);
-            menu.addSeparator();
-            JMenuItem remove = new JMenuItem("Delete launcher configuration…", AllIcons.General.Remove);
-            remove.addActionListener(e -> removeService(appearance));
-            menu.add(remove);
-            menu.addSeparator();
-            JMenuItem selection = new JMenuItem(selected.contains(appearance.itemId) ? "Deselect" : "Select");
-            selection.addActionListener(e -> toggleSelection());
-            menu.add(selection);
-            menu.show((Component) event.getSource(), event.getX(), event.getY());
-        }
-
-        private void toggleSelection() {
-            if (!selected.remove(appearance.itemId)) {
-                selected.add(appearance.itemId);
-            }
-            refreshState();
-            refreshLaunchActionState();
-        }
-
-        private JButton compactButton(Icon icon, String tooltip) {
-            return new HoverIconButton(LauncherIcons.scaleIcon(icon, 10), tooltip, 15, 15);
-        }
-
-        private void refreshBorder() {
-            refreshState();
-        }
-
-        private void refreshState() {
-            boolean selectedNow = selected.contains(appearance.itemId);
-            boolean runningNow = isRunning(appearance.configurationName);
-            boolean startingNow = pendingStarts.contains(appearance.configurationName);
-            if (startingNow) {
-                setBorder(startingBorder);
-            } else {
-                Color borderColor = runningNow
-                    ? RUNNING_ACCENT
-                    : (selectedNow ? MUTED_BORDER : UNSELECTED_BORDER);
-                setBorder(BorderFactory.createLineBorder(borderColor, runningNow ? RUNNING_BORDER_WIDTH : 1));
-            }
-            setBackground(selectedNow ? CARD_BACKGROUND : UNSELECTED_CARD_BACKGROUND);
-            serviceIcon.setEnabled(selectedNow);
-            nameLabel.setForeground(selectedNow ? normalTextColor : UNSELECTED_TEXT);
-            actions.setVisible(runningNow);
-            repaint();
-        }
-
-        private String toHtml(String value) {
-            String escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-            return "<html><div style='text-align:center'>" + escaped.replace("\n", "<br>") + "</div></html>";
-        }
+    /**
+     * Toggles the selection.
+     */
+    private void toggleSelection()
+    {
+      if (!selected.remove(launcherConfiguration.itemId))
+      {
+        selected.add(launcherConfiguration.itemId);
+      }
+      refreshState();
+      refreshLaunchActionState();
     }
 
-    private final class StartingBorder implements Border {
-        private static final int WIDTH = 2;
-
-        @Override
-        public void paintBorder(Component component, Graphics graphics, int x, int y, int width, int height) {
-            if (width <= WIDTH * 2 || height <= WIDTH * 2) {
-                return;
-            }
-            Graphics2D graphics2D = (Graphics2D) graphics.create();
-            try {
-                graphics2D.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                float perimeter = Math.max(1, 2f * ((width - WIDTH * 2f) + (height - WIDTH * 2f)));
-                float segmentLength = perimeter * 0.20f;
-                float gapLength = perimeter * 0.30f;
-                graphics2D.setStroke(new BasicStroke(
-                    WIDTH,
-                    BasicStroke.CAP_ROUND,
-                    BasicStroke.JOIN_ROUND,
-                    10,
-                    new float[]{segmentLength, gapLength},
-                    startingAnimationOffset % (segmentLength + gapLength)
-                ));
-                graphics2D.setColor(RUNNING_ACCENT);
-                graphics2D.drawRoundRect(
-                    x + 1,
-                    y + 1,
-                    width - 3,
-                    height - 3,
-                    6,
-                    6
-                );
-            } finally {
-                graphics2D.dispose();
-            }
-        }
-
-        @Override
-        public Insets getBorderInsets(Component component) {
-            return new Insets(WIDTH, WIDTH, WIDTH, WIDTH);
-        }
-
-        @Override
-        public boolean isBorderOpaque() {
-            return false;
-        }
+    /**
+     * Returns the result of compact button.
+     *
+     * @param icon the icon
+     * @param tooltip the tooltip
+     * @return the compact button result
+     */
+    private JButton compactButton(Icon icon, String tooltip)
+    {
+      Icon compactIcon = LauncherIcons.scaleIcon(icon, 10);
+      return new HoverIconButton(compactIcon, tooltip, HoverIconButton.Size.COMPACT);
     }
 
-    private record RunningSession(ProcessHandler handler, boolean debug) {
+    /**
+     * Refreshes the border.
+     */
+    private void refreshBorder()
+    {
+      refreshState();
     }
 
-    private static final class HoverIconButton extends JButton {
-        private HoverIconButton(Icon icon, String tooltip, int width, int height) {
-            super(icon);
-            setDisabledIcon(IconLoader.getDisabledIcon(icon));
-            setToolTipText(tooltip);
-            setFocusable(false);
-            setRolloverEnabled(true);
-            setContentAreaFilled(false);
-            setBorder(BorderFactory.createEmptyBorder());
-            setOpaque(false);
-            setPreferredSize(new Dimension(width, height));
-        }
-
-        @Override
-        protected void paintComponent(Graphics graphics) {
-            ButtonModel model = getModel();
-            if (isEnabled() && (model.isPressed() || model.isRollover())) {
-                Graphics2D graphics2D = (Graphics2D) graphics.create();
-                try {
-                    graphics2D.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    graphics2D.setColor(model.isPressed() ? PRESSED_BACKGROUND : HOVER_BACKGROUND);
-                    graphics2D.fillRoundRect(0, 0, getWidth(), getHeight(), 6, 6);
-                } finally {
-                    graphics2D.dispose();
-                }
-            }
-            super.paintComponent(graphics);
-        }
+    /**
+     * Refreshes the state.
+     */
+    private void refreshState()
+    {
+      boolean selectedNow = selected.contains(launcherConfiguration.itemId);
+      boolean runningNow = isRunning(launcherConfiguration.configurationName);
+      boolean startingNow = pendingStarts.contains(launcherConfiguration.configurationName);
+      if (startingNow)
+      {
+        setBorder(startingBorder);
+      }
+      else
+      {
+        Color borderColor = runningNow
+          ? RUNNING_ACCENT
+          : (selectedNow ? MUTED_BORDER : UNSELECTED_BORDER);
+        setBorder(BorderFactory.createLineBorder(borderColor, runningNow ? RUNNING_BORDER_WIDTH : 1));
+      }
+      setBackground(selectedNow ? CARD_BACKGROUND : UNSELECTED_CARD_BACKGROUND);
+      serviceIcon.setEnabled(selectedNow);
+      nameLabel.setForeground(selectedNow ? normalTextColor : UNSELECTED_TEXT);
+      boolean canStart = settings != null && !runningNow && !startingNow;
+      run.setVisible(canStart);
+      debug.setVisible(canStart);
+      restart.setVisible(runningNow);
+      stop.setVisible(runningNow);
+      actions.setVisible(canStart || runningNow);
+      repaint();
     }
 
-    private static final class VerticalScrollablePanel extends JPanel implements Scrollable {
-        @Override
-        public Dimension getPreferredScrollableViewportSize() {
-            return getPreferredSize();
-        }
-
-        @Override
-        public int getScrollableUnitIncrement(Rectangle visibleRect, int orientation, int direction) {
-            return 18;
-        }
-
-        @Override
-        public int getScrollableBlockIncrement(Rectangle visibleRect, int orientation, int direction) {
-            return Math.max(18, visibleRect.height - 18);
-        }
-
-        @Override
-        public boolean getScrollableTracksViewportWidth() {
-            return true;
-        }
-
-        @Override
-        public boolean getScrollableTracksViewportHeight() {
-            return false;
-        }
+    /**
+     * Returns the result of to html.
+     *
+     * @param value the value
+     * @return the to html result
+     */
+    private String toHtml(String value)
+    {
+      String escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+      return "<html><div style='text-align:center'>" + escaped.replace("\n", "<br>") + "</div></html>";
     }
+  }
+
 }

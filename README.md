@@ -1,40 +1,71 @@
 # Rider Service Launcher
 
-A local, frontend-only Rider plugin for arranging independent launcher configurations as visual service cards. Cards can optionally link to existing Rider run configurations and launch selected combinations through Rider's normal Run/Debug pipeline.
+![Service Launcher icon](src/main/resources/META-INF/pluginIcon.svg)
 
-## Features
+Service Launcher gives multi-service projects a small, visual control panel inside Rider. It is useful when a normal
+development session involves repeatedly starting, debugging, restarting, and stopping different combinations of
+services.
 
-- Compact responsive card layout with crisp HiDPI-aware 24px service icons that adds columns as the tool window gets wider.
-- Project-specific aliases, group names, group-aware ordering, visibility, and icons.
-- Standalone service cards and empty groups can be created directly from the launcher context menus.
-- Stable launcher-item IDs independent of Rider configuration names.
-- Rider run-configuration discovery never creates launcher configurations; links are assigned explicitly.
-- Items whose run configuration is missing remain visible with a warning and can be relinked.
-- Arbitrary SVG, PNG, JPEG, or GIF icons, stored directly with the launcher settings.
-- Portable XML export/import; custom icon data is embedded in the export.
-- Run or debug only the selected services that are not running yet.
-- Start missing and restart running selected services with one action; running services keep their current Run/Debug mode.
-- Stop all services started through the launcher with one action.
-- Running cards expose compact Stop and Restart controls in their upper-right corner.
-- Toolbar and card controls have Rider-style hover and pressed states.
-- Select-all and clear-selection actions in the launcher background context menu, plus show-all/hide-all in the configuration list.
-- Selected services use a thin bright CarLo-magenta border; running services use a distinctly heavier deep-magenta border. Cards in both states show both brand shades.
-- Right-click a card to edit, move, select, or permanently delete the launcher configuration.
-- Existing Rider run configurations remain the source of truth, so debugger support, environment variables, consoles, and before-launch tasks are preserved.
+The launcher does not replace Rider's run configurations. It provides an organized view over them, while Rider remains
+responsible for execution, debugging, consoles, environment variables, and before-launch tasks.
 
-## Build and install
+## Philosophy
 
-The project is compiled against the locally installed Rider 2025.2 (`252`) SDK and declares compatibility with Rider 2025.2 and later, including Rider 2026.1 (`261`).
+The plugin is intentionally lightweight:
 
-1. Run `gradlew.bat buildPlugin`.
-2. In Rider, open **Settings | Plugins**, choose the gear menu, then **Install Plugin from Disk**.
-3. Select the ZIP produced in `build/distributions`.
+- Launcher configurations describe how services should appear and be grouped. They exist independently from Rider run
+  configurations and can be linked or relinked when needed.
+- The launcher only contains services that the user explicitly creates/adds.
+- Starting and debugging use Rider's existing execution pipeline.
+- Configuration is project-specific and can be exported when a setup should be shared with the team.
+
+## Using the launcher
+
+Open **View | Tool Windows | Service Launcher**.
+
+To set up a project:
+
+1. Right-click the launcher background and create a service or group.
+2. Give the service a useful display name and, when it is ready to run, link it to an existing permanent Rider run
+   configuration.
+3. Select the services that belong to the current development task.
+4. Use **Run** or **Debug** to start the selected services.
+
+Right-click a card to edit, move, or remove its launcher configuration. Use the pencil button when it is more convenient
+to manage the complete list in one dialog.
+
+Import and export create a self-contained `*.service-launcher.xml` file. This is the simplest way to share a useful
+launcher arrangement without modifying anyone's Rider run configurations.
+
+> Only permanent Rider run configurations can be linked. If a `launchSettings.json` profile is missing, generate its
+> Rider configuration first.
+
+## Installing
+
+Download the plugin ZIP from the GitHub release. In Rider:
+
+1. Open **Settings | Plugins**.
+2. Choose the gear menu and **Install Plugin from Disk**.
+3. Select the downloaded ZIP and restart Rider when prompted.
 4. Open **View | Tool Windows | Service Launcher**.
 
-Use the pencil button to configure all cards at once. The configuration dialog's **Edit selected** action can link any launcher configuration to an available Rider run configuration. Right-click a visible card for focused editing, relinking, ordering, or deletion. Right-click the launcher background to create launcher configurations or groups and to select or deselect everything. **Import** and **Export** are available in the configuration dialog and create a self-contained `*.service-launcher.xml` file suitable for version control or sharing with the team. Configuration is project-specific and stored in Rider's workspace settings. No existing run configuration is modified.
+The plugin supports Rider 2025.2 and later.
 
-Only permanent run configurations are offered as link targets because temporary configurations can disappear at any time. For `launchSettings.json` profiles that are not listed yet, right-click the file in Rider and choose **Generate Configurations** first.
+## Building from source
 
-## Development
+The Gradle wrapper requires Java. Rider's bundled runtime can be used from PowerShell:
 
-Run `gradlew.bat runIde` to start an isolated Rider development instance. The plugin is deliberately implemented using only IntelliJ Platform frontend APIs; it has no ReSharper backend component.
+```powershell
+$env:JAVA_HOME = 'C:\Program Files\JetBrains\JetBrains Rider 2025.2.2.1\jbr'
+.\gradlew.bat buildPlugin
+```
+
+The resulting ZIP is written to `build/distributions`.
+
+For plugin development, run:
+
+```powershell
+.\gradlew.bat runIde
+```
+
+The implementation uses IntelliJ Platform frontend APIs and has no ReSharper backend component.

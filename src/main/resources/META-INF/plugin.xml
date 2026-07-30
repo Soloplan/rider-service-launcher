@@ -1,11 +1,25 @@
-<idea-plugin>
+<idea-plugin url="https://github.com/Soloplan/rider-service-launcher">
     <id>local.soloplan.tools.service-launcher</id>
     <name>Service Launcher</name>
     <vendor>Local Development</vendor>
 
     <description><![CDATA[
-        A visual launcher for selecting, running, and debugging arbitrary combinations
-        of existing Rider run configurations.
+        <p>
+            Service Launcher gives multi-service projects a focused control panel inside Rider. Arrange services in
+            groups, select the ones needed for the current task, and start or debug them together.
+        </p>
+        <p>
+            Launcher entries are created explicitly and remain independent from Rider run configurations. Link them
+            when they are ready to run while Rider stays responsible for execution, debugging, consoles, environment
+            variables, and before-launch tasks.
+        </p>
+        <p>
+            The goal is an organized view over a development environment, not a competing process or configuration
+            system.
+        </p>
+        <p>
+            Source code: <a href="https://github.com/Soloplan/rider-service-launcher">Soloplan/rider-service-launcher</a>
+        </p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

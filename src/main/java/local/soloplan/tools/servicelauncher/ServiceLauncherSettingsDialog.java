@@ -1,3 +1,9 @@
+//-----------------------------------------------------------------------
+// <copyright file="ServiceLauncherSettingsDialog.java" company="Soloplan GmbH">
+// Copyright (c) Soloplan GmbH. All rights reserved.
+// </copyright>
+//-----------------------------------------------------------------------
+
 package local.soloplan.tools.servicelauncher;
 
 import com.intellij.openapi.project.Project;
@@ -13,7 +19,6 @@ import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JPanel;
-import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
@@ -24,269 +29,229 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
-final class ServiceLauncherSettingsDialog extends DialogWrapper {
-    private final Project project;
-    private final AppearanceTableModel model;
+/**
+ * Represents a service launcher settings dialog.
+ */
+final class ServiceLauncherSettingsDialog extends DialogWrapper
+{
+  private final Project project;
+  private final LauncherConfigurationTableModel model;
 
-    ServiceLauncherSettingsDialog(Project project, List<ServiceLauncherSettings.ServiceAppearance> source) {
-        super(project);
-        this.project = project;
-        model = new AppearanceTableModel(new ArrayList<>(
-            source.stream().map(ServiceLauncherSettings.ServiceAppearance::copy).toList()
-        ));
-        setTitle("Customize Service Launcher");
-        setOKButtonText("Apply");
-        init();
+  /**
+   * Creates a new {@code ServiceLauncherSettingsDialog} instance.
+   *
+   * @param project the project
+   * @param source the source
+   */
+  ServiceLauncherSettingsDialog(Project project, List<ServiceLauncherSettings.LauncherConfiguration> source)
+  {
+    super(project);
+    this.project = project;
+    model = new LauncherConfigurationTableModel(new ArrayList<>(
+      source.stream().map(ServiceLauncherSettings.LauncherConfiguration::copy).toList()
+    ));
+    setTitle("Customize Service Launcher");
+    setOKButtonText("Apply");
+    init();
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  protected @Nullable JComponent createCenterPanel()
+  {
+    JBTable table = new JBTable(model);
+    table.setRowHeight(26);
+    table.setShowGrid(false);
+    table.setStriped(true);
+    table.getColumnModel().getColumn(0).setPreferredWidth(55);
+    table.getColumnModel().getColumn(1).setPreferredWidth(190);
+    table.getColumnModel().getColumn(2).setPreferredWidth(190);
+    table.getColumnModel().getColumn(3).setPreferredWidth(120);
+    table.getColumnModel().getColumn(4).setPreferredWidth(150);
+    table.getColumnModel().getColumn(5).setPreferredWidth(55);
+
+    JPanel decorated = ToolbarDecorator.createDecorator(table)
+      .disableAddAction()
+      .setRemoveAction(button -> removeSelected(table))
+      .setMoveUpAction(button -> move(table, -1))
+      .setMoveDownAction(button -> move(table, 1))
+      .createPanel();
+    decorated.setPreferredSize(new Dimension(900, 430));
+
+    JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    JButton showAll = new JButton("Show all");
+    showAll.addActionListener(actionEvent -> model.setAllVisible(true));
+    JButton hideAll = new JButton("Hide all");
+    hideAll.addActionListener(actionEvent -> model.setAllVisible(false));
+    JButton editSelected = new JButton("Edit selected…");
+    editSelected.addActionListener(actionEvent -> editSelected(table));
+    JButton importButton = new JButton("Import…");
+    importButton.addActionListener(actionEvent -> importConfiguration());
+    JButton exportButton = new JButton("Export…");
+    exportButton.addActionListener(actionEvent -> exportConfiguration());
+    actions.add(showAll);
+    actions.add(hideAll);
+    actions.add(editSelected);
+    actions.add(importButton);
+    actions.add(exportButton);
+
+    JPanel panel = new JPanel(new BorderLayout());
+    panel.add(actions, BorderLayout.NORTH);
+    panel.add(decorated, BorderLayout.CENTER);
+    return panel;
+  }
+
+  /**
+   * Edits the selected.
+   *
+   * @param table the table
+   */
+  private void editSelected(JBTable table)
+  {
+    int selectedRow = table.getSelectedRow();
+    if (selectedRow < 0)
+    {
+      Messages.showInfoMessage(project, "Select a launcher item first.", "Service Launcher");
+      return;
     }
-
-    @Override
-    protected @Nullable JComponent createCenterPanel() {
-        JBTable table = new JBTable(model);
-        table.setRowHeight(26);
-        table.setShowGrid(false);
-        table.setStriped(true);
-        table.getColumnModel().getColumn(0).setPreferredWidth(55);
-        table.getColumnModel().getColumn(1).setPreferredWidth(190);
-        table.getColumnModel().getColumn(2).setPreferredWidth(190);
-        table.getColumnModel().getColumn(3).setPreferredWidth(120);
-        table.getColumnModel().getColumn(4).setPreferredWidth(150);
-        table.getColumnModel().getColumn(5).setPreferredWidth(55);
-
-        JPanel decorated = ToolbarDecorator.createDecorator(table)
-            .disableAddAction()
-            .setRemoveAction(button -> removeSelected(table))
-            .setMoveUpAction(button -> move(table, -1))
-            .setMoveDownAction(button -> move(table, 1))
-            .createPanel();
-        decorated.setPreferredSize(new Dimension(900, 430));
-
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        JButton showAll = new JButton("Show all");
-        showAll.addActionListener(e -> model.setAllVisible(true));
-        JButton hideAll = new JButton("Hide all");
-        hideAll.addActionListener(e -> model.setAllVisible(false));
-        JButton editSelected = new JButton("Edit selected…");
-        editSelected.addActionListener(e -> editSelected(table));
-        JButton importButton = new JButton("Import…");
-        importButton.addActionListener(e -> importConfiguration());
-        JButton exportButton = new JButton("Export…");
-        exportButton.addActionListener(e -> exportConfiguration());
-        actions.add(showAll);
-        actions.add(hideAll);
-        actions.add(editSelected);
-        actions.add(importButton);
-        actions.add(exportButton);
-
-        JPanel panel = new JPanel(new BorderLayout());
-        panel.add(actions, BorderLayout.NORTH);
-        panel.add(decorated, BorderLayout.CENTER);
-        return panel;
+    ServiceLauncherSettings.LauncherConfiguration source = model.configurationAt(selectedRow);
+    Set<String> groups = new LinkedHashSet<>(ServiceLauncherSettings.getInstance(project).groupNames());
+    groups.addAll(model.groupNames());
+    List<String> configurations = RunManager.getInstance(project).getAllSettings().stream()
+      .filter(settings -> !settings.isTemporary())
+      .map(RunnerAndConfigurationSettings::getName)
+      .sorted(String.CASE_INSENSITIVE_ORDER)
+      .toList();
+    LauncherConfigurationEditorOptions options =
+      new LauncherConfigurationEditorOptions(groups, configurations, model.getRowCount());
+    LauncherConfigurationDialogRequest request = LauncherConfigurationDialogRequest.edit(source, options);
+    LauncherConfigurationDialog dialog = new LauncherConfigurationDialog(project, request);
+    if (dialog.showAndGet())
+    {
+      model.replaceItem(dialog.getConfiguration());
     }
+  }
 
-    private void editSelected(JBTable table) {
-        int selectedRow = table.getSelectedRow();
-        if (selectedRow < 0) {
-            Messages.showInfoMessage(project, "Select a launcher item first.", "Service Launcher");
-            return;
-        }
-        ServiceLauncherSettings.ServiceAppearance source = model.rows.get(selectedRow);
-        Set<String> groups = new LinkedHashSet<>(ServiceLauncherSettings.getInstance(project).groupNames());
-        model.rows.forEach(item -> groups.add(ServiceLauncherSettings.normalizeGroup(item.group)));
-        List<String> configurations = RunManager.getInstance(project).getAllSettings().stream()
-            .filter(settings -> !settings.isTemporary())
-            .map(RunnerAndConfigurationSettings::getName)
-            .sorted(String.CASE_INSENSITIVE_ORDER)
-            .toList();
-        ServiceAppearanceDialog dialog = new ServiceAppearanceDialog(
-            project, source, groups, configurations, model.rows.size()
-        );
-        if (dialog.showAndGet()) {
-            model.replaceItem(dialog.result());
-        }
+  /**
+   * Moves the operation.
+   *
+   * @param table the table
+   * @param delta the delta
+   */
+  private void move(JBTable table, int delta)
+  {
+    int selectedRow = table.getSelectedRow();
+    if (selectedRow < 0)
+    {
+      return;
     }
-
-    private void move(JBTable table, int delta) {
-        int selectedRow = table.getSelectedRow();
-        if (selectedRow < 0) {
-            return;
-        }
-        String group = ServiceLauncherSettings.normalizeGroup(model.rows.get(selectedRow).group);
-        int target = selectedRow + delta;
-        while (target >= 0 && target < model.rows.size()
-            && !group.equals(ServiceLauncherSettings.normalizeGroup(model.rows.get(target).group))) {
-            target += delta;
-        }
-        if (target < 0 || target >= model.rows.size()) {
-            return;
-        }
-        ServiceLauncherSettings.ServiceAppearance item = model.rows.remove(selectedRow);
-        model.rows.add(target, item);
-        ServiceLauncherSettings.normalizeOrders(model.rows);
-        model.fireTableDataChanged();
-        table.getSelectionModel().setSelectionInterval(target, target);
+    int target = model.moveWithinGroup(selectedRow, delta);
+    if (target < 0)
+    {
+      return;
     }
+    table.getSelectionModel().setSelectionInterval(target, target);
+  }
 
-    private void removeSelected(JBTable table) {
-        int selectedRow = table.getSelectedRow();
-        if (selectedRow < 0) {
-            return;
-        }
-        model.rows.remove(selectedRow);
-        ServiceLauncherSettings.normalizeOrders(model.rows);
-        model.fireTableDataChanged();
-        if (!model.rows.isEmpty()) {
-            int nextRow = Math.min(selectedRow, model.rows.size() - 1);
-            table.getSelectionModel().setSelectionInterval(nextRow, nextRow);
-        }
+  /**
+   * Removes the selected.
+   *
+   * @param table the table
+   */
+  private void removeSelected(JBTable table)
+  {
+    int selectedRow = table.getSelectedRow();
+    if (selectedRow < 0)
+    {
+      return;
     }
-
-    List<ServiceLauncherSettings.ServiceAppearance> result() {
-        ServiceLauncherSettings.normalizeOrders(model.rows);
-        return model.rows;
+    int nextRow = model.removeAt(selectedRow);
+    if (nextRow >= 0)
+    {
+      table.getSelectionModel().setSelectionInterval(nextRow, nextRow);
     }
+  }
 
-    private void exportConfiguration() {
-        JFileChooser chooser = chooser("Export Service Launcher Configuration");
-        chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), "services." + LauncherConfigurationIO.FILE_EXTENSION));
-        if (chooser.showSaveDialog(getContentPanel()) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        try {
-            LauncherConfigurationIO.exportTo(ensureExtension(chooser.getSelectedFile()), model.rows);
-        } catch (IOException exception) {
-            Messages.showErrorDialog(project, exception.getMessage(), "Could Not Export Configuration");
-        }
+  /**
+   * Returns the configurations.
+   *
+   * @return the configurations
+   */
+  List<ServiceLauncherSettings.LauncherConfiguration> getConfigurations()
+  {
+    return model.configurations();
+  }
+
+  /**
+   * Exports the configuration.
+   */
+  private void exportConfiguration()
+  {
+    JFileChooser chooser = chooser("Export Service Launcher Configuration");
+    chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), "services." + LauncherConfigurationIO.FILE_EXTENSION));
+    if (chooser.showSaveDialog(getContentPanel()) != JFileChooser.APPROVE_OPTION)
+    {
+      return;
     }
-
-    private void importConfiguration() {
-        JFileChooser chooser = chooser("Import Service Launcher Configuration");
-        if (chooser.showOpenDialog(getContentPanel()) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        try {
-            List<ServiceLauncherSettings.ServiceAppearance> imported = LauncherConfigurationIO.importFrom(chooser.getSelectedFile());
-            model.replaceWith(LauncherConfigurationIO.merge(model.rows, imported));
-        } catch (IOException exception) {
-            Messages.showErrorDialog(project, exception.getMessage(), "Could Not Import Configuration");
-        }
+    try
+    {
+      LauncherConfigurationIO.exportTo(ensureExtension(chooser.getSelectedFile()), model.configurations());
     }
-
-    private JFileChooser chooser(String title) {
-        JFileChooser chooser = new JFileChooser(project.getBasePath());
-        chooser.setDialogTitle(title);
-        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-            "Service Launcher export (*.service-launcher.xml)", "xml"
-        ));
-        return chooser;
+    catch (IOException exception)
+    {
+      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Export Configuration");
     }
+  }
 
-    private File ensureExtension(File file) {
-        return file.getName().endsWith("." + LauncherConfigurationIO.FILE_EXTENSION)
-            ? file
-            : new File(file.getParentFile(), file.getName() + "." + LauncherConfigurationIO.FILE_EXTENSION);
+  /**
+   * Imports the configuration.
+   */
+  private void importConfiguration()
+  {
+    JFileChooser chooser = chooser("Import Service Launcher Configuration");
+    if (chooser.showOpenDialog(getContentPanel()) != JFileChooser.APPROVE_OPTION)
+    {
+      return;
     }
-
-    private static final class AppearanceTableModel extends AbstractTableModel {
-        private static final String[] COLUMNS = {"Show", "Run configuration", "Display name", "Group", "Icon", "Order"};
-        private final List<ServiceLauncherSettings.ServiceAppearance> rows;
-
-        private AppearanceTableModel(List<ServiceLauncherSettings.ServiceAppearance> rows) {
-            this.rows = rows;
-        }
-
-        @Override
-        public int getRowCount() {
-            return rows.size();
-        }
-
-        @Override
-        public int getColumnCount() {
-            return COLUMNS.length;
-        }
-
-        @Override
-        public String getColumnName(int column) {
-            return COLUMNS[column];
-        }
-
-        @Override
-        public Class<?> getColumnClass(int columnIndex) {
-            return switch (columnIndex) {
-                case 0 -> Boolean.class;
-                case 5 -> Integer.class;
-                default -> String.class;
-            };
-        }
-
-        @Override
-        public boolean isCellEditable(int rowIndex, int columnIndex) {
-            return columnIndex != 1 && columnIndex != 4 && columnIndex != 5;
-        }
-
-        @Override
-        public Object getValueAt(int rowIndex, int columnIndex) {
-            ServiceLauncherSettings.ServiceAppearance item = rows.get(rowIndex);
-            return switch (columnIndex) {
-                case 0 -> item.visible;
-                case 1 -> {
-                    if (item.configurationName != null && !item.configurationName.isBlank()) {
-                        yield item.configurationName;
-                    }
-                    String expected = item.expectedConfigurationName == null ? "" : item.expectedConfigurationName;
-                    yield expected.isBlank() ? "⚠ Not linked" : "⚠ Not linked (expected: " + expected + ")";
-                }
-                case 2 -> item.displayName;
-                case 3 -> item.group;
-                case 4 -> item.customIconData == null || item.customIconData.isBlank()
-                    ? item.icon
-                    : "Custom: " + item.customIconName;
-                case 5 -> item.order + 1;
-                default -> "";
-            };
-        }
-
-        @Override
-        public void setValueAt(Object value, int rowIndex, int columnIndex) {
-            ServiceLauncherSettings.ServiceAppearance item = rows.get(rowIndex);
-            switch (columnIndex) {
-                case 0 -> item.visible = Boolean.TRUE.equals(value);
-                case 2 -> item.displayName = String.valueOf(value).trim();
-                case 3 -> item.group = ServiceLauncherSettings.normalizeGroup(String.valueOf(value));
-                default -> {
-                }
-            }
-            fireTableCellUpdated(rowIndex, columnIndex);
-        }
-
-        private void setAllVisible(boolean visible) {
-            rows.forEach(item -> item.visible = visible);
-            fireTableDataChanged();
-        }
-
-        private void replaceWith(List<ServiceLauncherSettings.ServiceAppearance> replacement) {
-            rows.clear();
-            rows.addAll(replacement);
-            fireTableDataChanged();
-        }
-
-        private void replaceItem(ServiceLauncherSettings.ServiceAppearance replacement) {
-            if (replacement.configurationName != null && !replacement.configurationName.isBlank()) {
-                for (ServiceLauncherSettings.ServiceAppearance item : rows) {
-                    if (!item.itemId.equals(replacement.itemId)
-                        && replacement.configurationName.equals(item.configurationName)) {
-                        item.expectedConfigurationName = item.configurationName;
-                        item.configurationName = "";
-                    }
-                }
-            }
-            for (int i = 0; i < rows.size(); i++) {
-                if (rows.get(i).itemId.equals(replacement.itemId)) {
-                    rows.set(i, replacement);
-                    break;
-                }
-            }
-            ServiceLauncherSettings.normalizeOrders(rows);
-            fireTableDataChanged();
-        }
+    try
+    {
+      List<ServiceLauncherSettings.LauncherConfiguration> imported =
+        LauncherConfigurationIO.importFrom(chooser.getSelectedFile());
+      model.replaceWith(LauncherConfigurationIO.merge(model.configurations(), imported));
     }
+    catch (IOException exception)
+    {
+      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Import Configuration");
+    }
+  }
+
+  /**
+   * Returns the result of chooser.
+   *
+   * @param title the title
+   * @return the chooser result
+   */
+  private JFileChooser chooser(String title)
+  {
+    JFileChooser chooser = new JFileChooser(project.getBasePath());
+    chooser.setDialogTitle(title);
+    chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+      "Service Launcher export (*.service-launcher.xml)", "xml"
+    ));
+    return chooser;
+  }
+
+  /**
+   * Ensures the extension.
+   *
+   * @param file the file
+   * @return the ensure extension result
+   */
+  private File ensureExtension(File file)
+  {
+    return file.getName().endsWith("." + LauncherConfigurationIO.FILE_EXTENSION)
+      ? file
+      : new File(file.getParentFile(), file.getName() + "." + LauncherConfigurationIO.FILE_EXTENSION);
+  }
+
 }
