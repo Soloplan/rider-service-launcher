@@ -26,6 +26,7 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
 
     public static final class StateData {
         public List<ServiceAppearance> services = new ArrayList<>();
+        public List<String> groups = new ArrayList<>();
     }
 
     public static final class ServiceAppearance {
@@ -72,10 +73,12 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
     @Override
     public void loadState(@NotNull StateData state) {
         this.state = state;
+        ensureGroups();
     }
 
-    public List<ServiceAppearance> synchronizedWith(List<String> configurationNames) {
+    public List<ServiceAppearance> reconciledWith(List<String> configurationNames) {
         ensureItemIds(state.services);
+        ensureGroups();
         Set<String> available = new HashSet<>(configurationNames);
         Set<String> linked = new HashSet<>();
         for (ServiceAppearance item : state.services) {
@@ -88,19 +91,14 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
                 item.expectedConfigurationName = configuredName;
                 item.configurationName = "";
             }
-        }
-
-        int nextOrder = state.services.stream()
-            .filter(s -> DEFAULT_GROUP.equals(normalizeGroup(s.group)))
-            .map(s -> s.order)
-            .max(Comparator.naturalOrder()).orElse(-1) + 1;
-        for (String name : configurationNames) {
-            if (!linked.contains(name)) {
-                state.services.add(new ServiceAppearance(name, nextOrder++));
-                linked.add(name);
+            String expectedName = safe(item.expectedConfigurationName);
+            if (!expectedName.isEmpty() && available.contains(expectedName) && linked.add(expectedName)) {
+                item.configurationName = expectedName;
+                item.expectedConfigurationName = "";
             }
         }
         normalizeOrders(state.services);
+        ensureGroups();
         return state.services;
     }
 
@@ -110,6 +108,68 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
         state.services.clear();
         state.services.addAll(snapshot);
         normalizeOrders(state.services);
+        ensureGroups();
+    }
+
+    public List<String> groupNames() {
+        ensureGroups();
+        return List.copyOf(state.groups);
+    }
+
+    public boolean addGroup(String requestedName) {
+        ensureGroups();
+        String name = normalizeGroup(requestedName);
+        if (containsGroup(name)) {
+            return false;
+        }
+        state.groups.add(name);
+        return true;
+    }
+
+    public boolean renameGroup(String sourceName, String requestedName) {
+        ensureGroups();
+        String targetName = normalizeGroup(requestedName);
+        int sourceIndex = indexOfGroup(sourceName);
+        if (sourceIndex < 0 || (containsGroup(targetName) && !sourceName.equalsIgnoreCase(targetName))) {
+            return false;
+        }
+        String existingName = state.groups.get(sourceIndex);
+        state.groups.set(sourceIndex, targetName);
+        state.services.stream()
+            .filter(item -> existingName.equalsIgnoreCase(normalizeGroup(item.group)))
+            .forEach(item -> item.group = targetName);
+        return true;
+    }
+
+    public boolean moveGroup(String groupName, int delta) {
+        ensureGroups();
+        int sourceIndex = indexOfGroup(groupName);
+        int targetIndex = sourceIndex + delta;
+        if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= state.groups.size()) {
+            return false;
+        }
+        String moved = state.groups.remove(sourceIndex);
+        state.groups.add(targetIndex, moved);
+        return true;
+    }
+
+    public boolean removeGroup(String groupName) {
+        ensureGroups();
+        boolean hasServices = state.services.stream()
+            .anyMatch(item -> normalizeGroup(item.group).equalsIgnoreCase(groupName));
+        if (hasServices) {
+            return false;
+        }
+        int index = indexOfGroup(groupName);
+        if (index < 0) {
+            return false;
+        }
+        state.groups.remove(index);
+        return true;
+    }
+
+    public boolean removeService(String itemId) {
+        return state.services.removeIf(item -> item.itemId.equals(itemId));
     }
 
     public static void normalizeOrders(List<ServiceAppearance> services) {
@@ -141,6 +201,40 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
                 item.itemId = UUID.randomUUID().toString();
                 ids.add(item.itemId);
             }
+        }
+    }
+
+    private void ensureGroups() {
+        if (state.groups == null) {
+            state.groups = new ArrayList<>();
+        }
+        List<String> normalized = new ArrayList<>();
+        for (String group : state.groups) {
+            addUniqueGroup(normalized, normalizeGroup(group));
+        }
+        for (ServiceAppearance item : state.services) {
+            addUniqueGroup(normalized, normalizeGroup(item.group));
+        }
+        state.groups.clear();
+        state.groups.addAll(normalized);
+    }
+
+    private boolean containsGroup(String groupName) {
+        return indexOfGroup(groupName) >= 0;
+    }
+
+    private int indexOfGroup(String groupName) {
+        for (int i = 0; i < state.groups.size(); i++) {
+            if (state.groups.get(i).equalsIgnoreCase(groupName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static void addUniqueGroup(List<String> groups, String groupName) {
+        if (groups.stream().noneMatch(existing -> existing.equalsIgnoreCase(groupName))) {
+            groups.add(groupName);
         }
     }
 

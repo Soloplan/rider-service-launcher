@@ -61,7 +61,6 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -206,14 +205,16 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
         groupsPanel.removeAll();
 
         Map<String, RunnerAndConfigurationSettings> available = availableConfigurations();
-        List<ServiceLauncherSettings.ServiceAppearance> appearances = ServiceLauncherSettings.getInstance(project)
-            .synchronizedWith(new ArrayList<>(available.keySet()));
+        ServiceLauncherSettings launcherSettings = ServiceLauncherSettings.getInstance(project);
+        List<ServiceLauncherSettings.ServiceAppearance> appearances =
+            launcherSettings.reconciledWith(new ArrayList<>(available.keySet()));
         availableByName = available;
         currentAppearances = appearances;
         Map<String, ServiceLauncherSettings.ServiceAppearance> byId = new HashMap<>();
         appearances.forEach(item -> byId.put(item.itemId, item));
         appearancesById = byId;
         Map<String, List<ServiceLauncherSettings.ServiceAppearance>> groups = new LinkedHashMap<>();
+        launcherSettings.groupNames().forEach(group -> groups.put(group, new ArrayList<>()));
         appearances.stream()
             .filter(item -> item.visible)
             .forEach(item -> groups.computeIfAbsent(ServiceLauncherSettings.normalizeGroup(item.group), ignored -> new ArrayList<>())
@@ -221,8 +222,8 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
 
         if (groups.isEmpty()) {
             JBLabel emptyState = new JBLabel(
-                "<html><div style='text-align:center'>No visible permanent run configurations.<br>" +
-                    "Create configurations or use the pencil button to show them.</div></html>",
+                "<html><div style='text-align:center'>No services or groups yet.<br>" +
+                    "Right-click here to create a launcher configuration or group.</div></html>",
                 SwingConstants.CENTER
             );
             emptyState.setAlignmentX(Component.CENTER_ALIGNMENT);
@@ -291,6 +292,13 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
             return;
         }
         JPopupMenu menu = new JPopupMenu();
+        JMenuItem addService = new JMenuItem("Add service…");
+        addService.addActionListener(e -> createService(null));
+        JMenuItem addGroup = new JMenuItem("Add group…");
+        addGroup.addActionListener(e -> createGroup());
+        menu.add(addService);
+        menu.add(addGroup);
+        menu.addSeparator();
         JMenuItem selectAllItem = new JMenuItem("Select all visible services");
         selectAllItem.addActionListener(e -> selectAll());
         JMenuItem selectNoneItem = new JMenuItem("Clear selection");
@@ -451,6 +459,74 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
         }
     }
 
+    private void createService(String initialGroup) {
+        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
+        List<String> groups = groupNames();
+        String group = initialGroup == null
+            ? (groups.isEmpty() ? ServiceLauncherSettings.DEFAULT_GROUP : groups.get(0))
+            : initialGroup;
+        ServiceLauncherSettings.ServiceAppearance created =
+            new ServiceLauncherSettings.ServiceAppearance("", (int) current.stream()
+                .filter(item -> group.equals(ServiceLauncherSettings.normalizeGroup(item.group)))
+                .count());
+        created.group = group;
+        created.visible = true;
+        ServiceAppearanceDialog dialog = new ServiceAppearanceDialog(
+            project, created, groups, availableByName.keySet(), current.size() + 1, true
+        );
+        if (dialog.showAndGet()) {
+            ServiceLauncherSettings.ServiceAppearance result = dialog.result();
+            applyEditedAppearance(current, result);
+            ServiceLauncherSettings.getInstance(project).replaceWith(current);
+            rebuild();
+        }
+    }
+
+    private void createGroup() {
+        String requested = Messages.showInputDialog(
+            project,
+            "Enter a name for the new group:",
+            "Create Group",
+            Messages.getQuestionIcon()
+        );
+        if (requested == null) {
+            return;
+        }
+        String group = requested.trim();
+        if (group.isEmpty()) {
+            Messages.showErrorDialog(project, "The group name cannot be empty.", "Create Group");
+            return;
+        }
+        if (!ServiceLauncherSettings.getInstance(project).addGroup(group)) {
+            Messages.showErrorDialog(project, "A group with that name already exists.", "Create Group");
+            return;
+        }
+        rebuild();
+    }
+
+    private void removeService(ServiceLauncherSettings.ServiceAppearance service) {
+        String name = service.displayName == null || service.displayName.isBlank()
+            ? (service.configurationName == null || service.configurationName.isBlank()
+                ? "this launcher configuration"
+                : service.configurationName)
+            : service.displayName;
+        int choice = Messages.showYesNoDialog(
+            project,
+            "Delete the launcher configuration '" + name + "'?",
+            "Delete Launcher Configuration",
+            "Delete",
+            "Cancel",
+            Messages.getWarningIcon()
+        );
+        if (choice != Messages.YES) {
+            return;
+        }
+        selected.remove(service.itemId);
+        if (ServiceLauncherSettings.getInstance(project).removeService(service.itemId)) {
+            rebuild();
+        }
+    }
+
     private void applyEditedAppearance(List<ServiceLauncherSettings.ServiceAppearance> current,
                                        ServiceLauncherSettings.ServiceAppearance edited) {
         if (edited.configurationName != null && !edited.configurationName.isBlank()) {
@@ -537,43 +613,28 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
         if (sourceGroup.equals(targetGroup)) {
             return;
         }
-        boolean duplicate = groupNames().stream()
-            .anyMatch(group -> !group.equals(sourceGroup) && group.equalsIgnoreCase(targetGroup));
-        if (duplicate) {
+        ServiceLauncherSettings settings = ServiceLauncherSettings.getInstance(project);
+        if (!settings.renameGroup(sourceGroup, targetGroup)) {
             Messages.showErrorDialog(project, "A group with that name already exists.", "Rename Group");
             return;
         }
-        List<ServiceLauncherSettings.ServiceAppearance> current = appearances();
-        current.stream()
-            .filter(item -> sourceGroup.equals(ServiceLauncherSettings.normalizeGroup(item.group)))
-            .forEach(item -> item.group = targetGroup);
-        ServiceLauncherSettings.getInstance(project).replaceWith(current);
         rebuild();
     }
 
     private void moveGroup(String sourceGroup, int delta) {
-        Map<String, List<ServiceLauncherSettings.ServiceAppearance>> grouped = new LinkedHashMap<>();
-        appearances().forEach(item -> grouped
-            .computeIfAbsent(ServiceLauncherSettings.normalizeGroup(item.group), ignored -> new ArrayList<>())
-            .add(item));
-        List<String> groups = new ArrayList<>(grouped.keySet());
-        int sourceIndex = groups.indexOf(sourceGroup);
-        int targetIndex = sourceIndex + delta;
-        if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= groups.size()) {
-            return;
+        if (ServiceLauncherSettings.getInstance(project).moveGroup(sourceGroup, delta)) {
+            rebuild();
         }
-        Collections.swap(groups, sourceIndex, targetIndex);
-        List<ServiceLauncherSettings.ServiceAppearance> reordered = new ArrayList<>();
-        groups.forEach(group -> reordered.addAll(grouped.get(group)));
-        ServiceLauncherSettings.getInstance(project).replaceWith(reordered);
-        rebuild();
+    }
+
+    private void removeGroup(String group) {
+        if (ServiceLauncherSettings.getInstance(project).removeGroup(group)) {
+            rebuild();
+        }
     }
 
     private List<String> groupNames() {
-        return appearances().stream()
-            .map(item -> ServiceLauncherSettings.normalizeGroup(item.group))
-            .distinct()
-            .toList();
+        return ServiceLauncherSettings.getInstance(project).groupNames();
     }
 
     private void installGroupPopup(JComponent component, String group) {
@@ -597,6 +658,13 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
         List<String> groups = groupNames();
         int groupIndex = groups.indexOf(group);
         JPopupMenu menu = new JPopupMenu();
+        JMenuItem addService = new JMenuItem("Add service to group…");
+        addService.addActionListener(e -> createService(group));
+        JMenuItem addGroup = new JMenuItem("Add group…");
+        addGroup.addActionListener(e -> createGroup());
+        menu.add(addService);
+        menu.add(addGroup);
+        menu.addSeparator();
         JMenuItem rename = new JMenuItem("Rename group…", AllIcons.Actions.Edit);
         rename.addActionListener(e -> renameGroup(group));
         JMenuItem moveUp = new JMenuItem("Move group up");
@@ -605,9 +673,14 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
         JMenuItem moveDown = new JMenuItem("Move group down");
         moveDown.setEnabled(groupIndex >= 0 && groupIndex < groups.size() - 1);
         moveDown.addActionListener(e -> moveGroup(group, 1));
+        JMenuItem remove = new JMenuItem("Remove empty group");
+        remove.setEnabled(appearances().stream()
+            .noneMatch(item -> group.equalsIgnoreCase(ServiceLauncherSettings.normalizeGroup(item.group))));
+        remove.addActionListener(e -> removeGroup(group));
         menu.add(rename);
         menu.add(moveUp);
         menu.add(moveDown);
+        menu.add(remove);
         menu.addSeparator();
         JMenuItem selectAllItem = new JMenuItem("Select all visible services");
         selectAllItem.addActionListener(e -> selectAll());
@@ -771,7 +844,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
             installGroupPopup(heading, title);
             add(heading, BorderLayout.NORTH);
             cardGrid.setOpaque(false);
-            installSelectionPopup(cardGrid);
+            installGroupPopup(cardGrid, title);
             for (ServiceLauncherSettings.ServiceAppearance appearance : items) {
                 ServiceCard card = new ServiceCard(appearance, available.get(appearance.configurationName));
                 cards.put(appearance.itemId, card);
@@ -936,7 +1009,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
             menu.add(moveDown);
 
             JMenu groups = new JMenu("Move to group");
-            appearances().stream().map(item -> ServiceLauncherSettings.normalizeGroup(item.group)).distinct()
+            groupNames().stream()
                 .filter(group -> !group.equals(ServiceLauncherSettings.normalizeGroup(appearance.group)))
                 .forEach(group -> {
                     JMenuItem target = new JMenuItem(group);
@@ -944,6 +1017,10 @@ final class ServiceLauncherPanel extends JPanel implements Disposable {
                     groups.add(target);
                 });
             menu.add(groups);
+            menu.addSeparator();
+            JMenuItem remove = new JMenuItem("Delete launcher configuration…", AllIcons.General.Remove);
+            remove.addActionListener(e -> removeService(appearance));
+            menu.add(remove);
             menu.addSeparator();
             JMenuItem selection = new JMenuItem(selected.contains(appearance.itemId) ? "Deselect" : "Select");
             selection.addActionListener(e -> toggleSelection());

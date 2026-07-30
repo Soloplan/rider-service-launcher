@@ -44,6 +44,12 @@ final class ServiceAppearanceDialog extends DialogWrapper {
     ServiceAppearanceDialog(Project project, ServiceLauncherSettings.ServiceAppearance source,
                             Collection<String> knownGroups, Collection<String> availableConfigurations,
                             int maxOrder) {
+        this(project, source, knownGroups, availableConfigurations, maxOrder, false);
+    }
+
+    ServiceAppearanceDialog(Project project, ServiceLauncherSettings.ServiceAppearance source,
+                            Collection<String> knownGroups, Collection<String> availableConfigurations,
+                            int maxOrder, boolean creating) {
         super(project);
         this.project = project;
         this.edited = source.copy();
@@ -69,8 +75,10 @@ final class ServiceAppearanceDialog extends DialogWrapper {
                 ? source.expectedConfigurationName
                 : source.configurationName)
             : source.displayName;
-        setTitle("Edit " + (titleName == null || titleName.isBlank() ? "unlinked service" : titleName));
-        setOKButtonText("Apply");
+        setTitle(creating
+            ? "Create Service"
+            : "Edit " + (titleName == null || titleName.isBlank() ? "unlinked service" : titleName));
+        setOKButtonText(creating ? "Create" : "Apply");
         init();
     }
 

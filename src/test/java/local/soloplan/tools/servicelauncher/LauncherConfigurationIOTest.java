@@ -108,19 +108,16 @@ public class LauncherConfigurationIOTest {
     }
 
     @Test
-    public void newlyDiscoveredConfigurationsAreInactiveByDefault() {
+    public void discoveredRunConfigurationsDoNotCreateLauncherConfigurations() {
         ServiceLauncherSettings settings = new ServiceLauncherSettings();
 
-        List<ServiceLauncherSettings.ServiceAppearance> items = settings.synchronizedWith(List.of("New API"));
+        List<ServiceLauncherSettings.ServiceAppearance> items = settings.reconciledWith(List.of("New API"));
 
-        assertEquals(1, items.size());
-        assertEquals("New API", items.get(0).configurationName);
-        assertFalse(items.get(0).visible);
-        assertFalse(items.get(0).itemId.isBlank());
+        assertTrue(items.isEmpty());
     }
 
     @Test
-    public void missingConfigurationLeavesExistingItemUnlinkedAndAddsReplacementInactive() {
+    public void missingRunConfigurationOnlyUnlinksTheExistingLauncherConfiguration() {
         ServiceLauncherSettings settings = new ServiceLauncherSettings();
         ServiceLauncherSettings.StateData state = new ServiceLauncherSettings.StateData();
         ServiceLauncherSettings.ServiceAppearance existing = item("Old API", "Backend", 0);
@@ -128,15 +125,29 @@ public class LauncherConfigurationIOTest {
         state.services.add(existing);
         settings.loadState(state);
 
-        List<ServiceLauncherSettings.ServiceAppearance> items = settings.synchronizedWith(List.of("Renamed API"));
+        List<ServiceLauncherSettings.ServiceAppearance> items = settings.reconciledWith(List.of("Renamed API"));
 
-        assertEquals(2, items.size());
+        assertEquals(1, items.size());
         assertEquals(existing.itemId, items.get(0).itemId);
         assertEquals("", items.get(0).configurationName);
         assertEquals("Old API", items.get(0).expectedConfigurationName);
         assertTrue(items.get(0).visible);
-        assertEquals("Renamed API", items.get(1).configurationName);
-        assertFalse(items.get(1).visible);
+    }
+
+    @Test
+    public void returningRunConfigurationRestoresItsExistingLink() {
+        ServiceLauncherSettings settings = new ServiceLauncherSettings();
+        ServiceLauncherSettings.StateData state = new ServiceLauncherSettings.StateData();
+        ServiceLauncherSettings.ServiceAppearance existing = item("", "Backend", 0);
+        existing.expectedConfigurationName = "Orders API";
+        state.services.add(existing);
+        settings.loadState(state);
+
+        List<ServiceLauncherSettings.ServiceAppearance> items = settings.reconciledWith(List.of("Orders API"));
+
+        assertEquals(1, items.size());
+        assertEquals("Orders API", existing.configurationName);
+        assertEquals("", existing.expectedConfigurationName);
     }
 
     @Test

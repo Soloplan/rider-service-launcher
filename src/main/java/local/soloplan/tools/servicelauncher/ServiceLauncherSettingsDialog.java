@@ -54,7 +54,7 @@ final class ServiceLauncherSettingsDialog extends DialogWrapper {
 
         JPanel decorated = ToolbarDecorator.createDecorator(table)
             .disableAddAction()
-            .disableRemoveAction()
+            .setRemoveAction(button -> removeSelected(table))
             .setMoveUpAction(button -> move(table, -1))
             .setMoveDownAction(button -> move(table, 1))
             .createPanel();
@@ -90,7 +90,7 @@ final class ServiceLauncherSettingsDialog extends DialogWrapper {
             return;
         }
         ServiceLauncherSettings.ServiceAppearance source = model.rows.get(selectedRow);
-        Set<String> groups = new LinkedHashSet<>();
+        Set<String> groups = new LinkedHashSet<>(ServiceLauncherSettings.getInstance(project).groupNames());
         model.rows.forEach(item -> groups.add(ServiceLauncherSettings.normalizeGroup(item.group)));
         List<String> configurations = RunManager.getInstance(project).getAllSettings().stream()
             .filter(settings -> !settings.isTemporary())
@@ -124,6 +124,20 @@ final class ServiceLauncherSettingsDialog extends DialogWrapper {
         ServiceLauncherSettings.normalizeOrders(model.rows);
         model.fireTableDataChanged();
         table.getSelectionModel().setSelectionInterval(target, target);
+    }
+
+    private void removeSelected(JBTable table) {
+        int selectedRow = table.getSelectedRow();
+        if (selectedRow < 0) {
+            return;
+        }
+        model.rows.remove(selectedRow);
+        ServiceLauncherSettings.normalizeOrders(model.rows);
+        model.fireTableDataChanged();
+        if (!model.rows.isEmpty()) {
+            int nextRow = Math.min(selectedRow, model.rows.size() - 1);
+            table.getSelectionModel().setSelectionInterval(nextRow, nextRow);
+        }
     }
 
     List<ServiceLauncherSettings.ServiceAppearance> result() {
