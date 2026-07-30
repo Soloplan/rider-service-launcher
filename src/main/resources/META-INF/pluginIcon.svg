@@ -1,0 +1,18 @@
+<svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="tile">
+      <rect x="1" y="1" width="38" height="38" rx="9"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <path fill="#FB068D" d="M1 1h38v10H1z"/>
+    <path fill="#E8007F" d="M1 11h38v10H1z"/>
+    <path fill="#C3006B" d="M1 21h38v9H1z"/>
+    <path fill="#980054" d="M1 30h38v9H1z"/>
+  </g>
+  <rect x="1.5" y="1.5" width="37" height="37" rx="8.5" fill="none" stroke="#980054"/>
+  <g fill="#FFF">
+    <path fill-rule="evenodd" d="M8 8h14v6H8V8Zm3 2v2h8v-2h-8ZM8 17h14v6H8v-6Zm3 2v2h8v-2h-8ZM8 26h14v6H8v-6Zm3 2v2h8v-2h-8Z"/>
+    <path d="m26 12 8 8-8 8V12Z"/>
+  </g>
+</svg>

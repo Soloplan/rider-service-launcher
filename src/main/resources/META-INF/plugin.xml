@@ -1,0 +1,19 @@
+<idea-plugin>
+    <id>local.soloplan.tools.service-launcher</id>
+    <name>Service Launcher</name>
+    <vendor>Local Development</vendor>
+
+    <description><![CDATA[
+        A visual launcher for selecting, running, and debugging arbitrary combinations
+        of existing Rider run configurations.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Service Launcher"
+                    anchor="right"
+                    factoryClass="local.soloplan.tools.servicelauncher.ServiceLauncherToolWindowFactory"
+                    icon="/icons/toolWindow.svg"/>
+    </extensions>
+</idea-plugin>
