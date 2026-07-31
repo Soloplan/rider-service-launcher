@@ -55,6 +55,7 @@ import java.awt.Point;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -91,6 +92,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   private final Set<String> pendingStarts = new HashSet<>();
   private final Map<String, ServiceCard> cards = new HashMap<>();
   private final Map<String, ServiceCard> cardsByConfiguration = new HashMap<>();
+  private final List<ServiceGroupPanel> groupPanels = new ArrayList<>();
   private final AtomicBoolean rebuildScheduled = new AtomicBoolean();
   private final Timer startingAnimationTimer =
     new Timer(STARTING_ANIMATION_FRAME_DELAY_MS, event -> advanceStartingAnimation());
@@ -105,6 +107,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   private JButton debugButton;
   private JButton restartAllButton;
   private JButton stopAllButton;
+  private JButton selectionToggleButton;
   private final Icon startingIcon = new AnimatedIcon.Default();
 
   /**
@@ -214,22 +217,28 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     JPanel toolbar = new JPanel(new BorderLayout());
     toolbar.setOpaque(false);
     toolbar.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
-    toolbar.add(createEditButton(), BorderLayout.WEST);
+    toolbar.add(createConfigurationActions(), BorderLayout.WEST);
     toolbar.add(createLaunchActions(), BorderLayout.EAST);
     refreshAggregateActionState();
     return toolbar;
   }
 
   /**
-   * Creates the edit button.
+   * Creates the launcher configuration actions.
    *
-   * @return the create edit button result
+   * @return the launcher configuration actions
    */
-  private JButton createEditButton()
+  private JPanel createConfigurationActions()
   {
+    JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+    actions.setOpaque(false);
     JButton editButton = iconButton(AllIcons.Actions.Edit, "Customize services");
     editButton.addActionListener(actionEvent -> editLauncherConfigurations());
-    return editButton;
+    selectionToggleButton = iconButton(AllIcons.Actions.Selectall, "Select all visible services");
+    selectionToggleButton.addActionListener(actionEvent -> toggleSelection(cards.keySet()));
+    actions.add(editButton);
+    actions.add(selectionToggleButton);
+    return actions;
   }
 
   /**
@@ -275,6 +284,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   {
     cards.clear();
     cardsByConfiguration.clear();
+    groupPanels.clear();
     groupsPanel.removeAll();
     Map<String, RunnerAndConfigurationSettings> available = availableConfigurations();
     ServiceLauncherSettings launcherSettings = ServiceLauncherSettings.getInstance(project);
@@ -390,6 +400,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   )
   {
     ServiceGroupPanel group = createGroupPanel(name, configurations, available);
+    groupPanels.add(group);
     group.setAlignmentX(Component.LEFT_ALIGNMENT);
     groupsPanel.add(group);
     groupsPanel.add(Box.createVerticalStrut(14));
@@ -405,6 +416,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     selected.retainAll(cards.keySet());
     pendingStarts.retainAll(available.keySet());
     synchronizeStartingAnimation();
+    refreshSelectionControls();
     refreshAggregateActionState();
     groupsPanel.revalidate();
     groupsPanel.repaint();
@@ -452,7 +464,16 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     List<ServiceCard> groupCards = launcherConfigurations.stream()
       .map(launcherConfiguration -> createCard(launcherConfiguration, available.get(launcherConfiguration.configurationName)))
       .toList();
-    return new ServiceGroupPanel(title, groupCards, component -> installGroupPopup(component, title));
+    Set<String> itemIds = launcherConfigurations.stream()
+      .map(configuration -> configuration.itemId)
+      .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    return new ServiceGroupPanel(
+      title,
+      groupCards,
+      component -> installGroupPopup(component, title),
+      () -> allSelected(itemIds),
+      () -> toggleSelection(itemIds)
+    );
   }
 
   /**
@@ -483,6 +504,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   {
     selected.addAll(cards.keySet());
     cards.values().forEach(ServiceCard::refreshBorder);
+    refreshSelectionControls();
     refreshLaunchActionState();
   }
 
@@ -493,7 +515,65 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   {
     selected.clear();
     cards.values().forEach(ServiceCard::refreshBorder);
+    refreshSelectionControls();
     refreshLaunchActionState();
+  }
+
+  /**
+   * Toggles the selection of the requested launcher configurations.
+   *
+   * @param itemIds the stable launcher configuration identifiers to toggle
+   */
+  private void toggleSelection(Collection<String> itemIds)
+  {
+    if (itemIds.isEmpty())
+    {
+      return;
+    }
+    if (allSelected(itemIds))
+    {
+      selected.removeAll(itemIds);
+    }
+    else
+    {
+      selected.addAll(itemIds);
+    }
+    itemIds.stream()
+      .map(cards::get)
+      .filter(java.util.Objects::nonNull)
+      .forEach(ServiceCard::refreshBorder);
+    refreshSelectionControls();
+    refreshLaunchActionState();
+  }
+
+  /**
+   * Determines whether all requested launcher configurations are selected.
+   *
+   * @param itemIds the stable launcher configuration identifiers to inspect
+   * @return whether the collection is nonempty and every identifier is selected
+   */
+  private boolean allSelected(Collection<String> itemIds)
+  {
+    return !itemIds.isEmpty() && selected.containsAll(itemIds);
+  }
+
+  /**
+   * Refreshes the global and category selection toggles.
+   */
+  private void refreshSelectionControls()
+  {
+    if (selectionToggleButton != null)
+    {
+      boolean hasCards = !cards.isEmpty();
+      boolean deselect = hasCards && allSelected(cards.keySet());
+      selectionToggleButton.setEnabled(hasCards);
+      selectionToggleButton.setIcon(deselect ? AllIcons.Actions.Unselectall : AllIcons.Actions.Selectall);
+      selectionToggleButton.setDisabledIcon(IconLoader.getDisabledIcon(selectionToggleButton.getIcon()));
+      selectionToggleButton.setToolTipText(
+        deselect ? "Deselect all visible services" : "Select all visible services"
+      );
+    }
+    groupPanels.forEach(ServiceGroupPanel::refreshSelectionState);
   }
 
   /**
@@ -1581,6 +1661,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
         selected.add(launcherConfiguration.itemId);
       }
       refreshState();
+      refreshSelectionControls();
       refreshLaunchActionState();
     }
 
