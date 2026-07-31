@@ -43,6 +43,7 @@ final class ServiceGroupPanel extends JPanel
   private final JPanel cardGrid = new JPanel();
   private final JButton selectionToggleButton;
   private final BooleanSupplier allSelected;
+  private final boolean showSelectionToggle;
   private int columns;
 
   /**
@@ -53,26 +54,32 @@ final class ServiceGroupPanel extends JPanel
    * @param popupInstaller the popup installer
    * @param allSelected supplies whether all cards in the category are selected
    * @param selectionToggle toggles the selection of every card in the category
+   * @param showSelectionToggle whether the category toggle should be available
    */
   ServiceGroupPanel(
     String title,
     List<? extends Component> cards,
     Consumer<JComponent> popupInstaller,
     BooleanSupplier allSelected,
-    Runnable selectionToggle
+    Runnable selectionToggle,
+    boolean showSelectionToggle
   )
   {
     super(new BorderLayout(0, CARD_GAP));
     this.allSelected = allSelected;
+    this.showSelectionToggle = showSelectionToggle;
     selectionToggleButton = createSelectionToggleButton(selectionToggle);
     setOpaque(false);
     popupInstaller.accept(this);
     add(createHeading(title, popupInstaller), BorderLayout.NORTH);
     configureCardGrid(cards, popupInstaller);
     add(cardGrid, BorderLayout.CENTER);
-    selectionToggleButton.setEnabled(!cards.isEmpty());
+    selectionToggleButton.setEnabled(showSelectionToggle && !cards.isEmpty());
     refreshSelectionState();
-    installSelectionToggleVisibility();
+    if (showSelectionToggle)
+    {
+      installSelectionToggleVisibility();
+    }
     addComponentListener(new ComponentAdapter()
     {
       /** {@inheritDoc} */
@@ -106,7 +113,10 @@ final class ServiceGroupPanel extends JPanel
     selectionSlot.setOpaque(false);
     selectionSlot.setPreferredSize(slotSize);
     selectionSlot.add(selectionToggleButton, BorderLayout.CENTER);
-    heading.add(Box.createRigidArea(slotSize), BorderLayout.WEST);
+    Component selectionSpacer = Box.createRigidArea(slotSize);
+    selectionSpacer.setVisible(showSelectionToggle);
+    selectionSlot.setVisible(showSelectionToggle);
+    heading.add(selectionSpacer, BorderLayout.WEST);
     heading.add(titleLabel, BorderLayout.CENTER);
     heading.add(selectionSlot, BorderLayout.EAST);
     return heading;

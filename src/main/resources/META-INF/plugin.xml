@@ -25,6 +25,10 @@
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <applicationConfigurable id="local.soloplan.tools.service-launcher.preferences"
+                                 parentId="tools"
+                                 displayName="Service Launcher"
+                                 instance="local.soloplan.tools.servicelauncher.ServiceLauncherPreferencesConfigurable"/>
         <toolWindow id="Service Launcher"
                     anchor="right"
                     factoryClass="local.soloplan.tools.servicelauncher.ServiceLauncherToolWindowFactory"

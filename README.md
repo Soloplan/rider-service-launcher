@@ -37,6 +37,10 @@ to manage the complete list in one dialog.
 Import and export create a self-contained `*.service-launcher.xml` file. This is the simplest way to share a useful
 launcher arrangement without modifying anyone's Rider run configurations.
 
+Application-level preferences are available under **Settings | Tools | Service Launcher**. They control card actions,
+selection toggles, the primary color, and the startup presentation. These preferences are not included in launcher
+imports or exports.
+
 > Only permanent Rider run configurations can be linked. If a `launchSettings.json` profile is missing, generate its
 > Rider configuration first.
 

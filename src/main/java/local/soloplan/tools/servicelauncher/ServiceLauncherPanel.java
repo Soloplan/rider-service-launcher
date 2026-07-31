@@ -73,18 +73,20 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
 {
   private static final int MIN_CARD_WIDTH = 180;
   private static final int RUNNING_BORDER_WIDTH = 2;
-  private static final int STARTING_ANIMATION_FRAME_DELAY_MS = 16;
+  private static final int PRETTY_STARTING_ANIMATION_FRAME_DELAY_MS = 16;
+  private static final int SIMPLE_STARTING_ANIMATION_FRAME_DELAY_MS = 100;
   private static final float STARTING_ANIMATION_SPEED_PX_PER_SECOND = 87.5f;
-  private static final Color RUNNING_ACCENT = new JBColor(new Color(0xE8007F), new Color(0xFB068D));
   private static final Color CARD_BACKGROUND = new JBColor(new Color(0xF2F2F2), new Color(0x343434));
   private static final Color UNSELECTED_CARD_BACKGROUND =
     new JBColor(new Color(0xDADADA), new Color(0x292929));
   private static final Color UNSELECTED_TEXT =
     new JBColor(new Color(0x747474), new Color(0x929292));
-  private static final Color MUTED_BORDER = new JBColor(new Color(0xA0A0A0), new Color(0x8B8B8B));
   private static final Color UNSELECTED_BORDER =
     new JBColor(new Color(0xB8B8B8), new Color(0x515151));
+  private static final Color SELECTED_BORDER =
+    new JBColor(new Color(0x8A8A8A), new Color(0x737373));
   private final Project project;
+  private final ServiceLauncherPreferences preferences;
   private final VerticalScrollablePanel groupsPanel = new VerticalScrollablePanel();
   private final Set<String> selected = new HashSet<>();
   private final Map<String, List<RunningSession>> runningSessions = new HashMap<>();
@@ -95,10 +97,12 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   private final List<ServiceGroupPanel> groupPanels = new ArrayList<>();
   private final AtomicBoolean rebuildScheduled = new AtomicBoolean();
   private final Timer startingAnimationTimer =
-    new Timer(STARTING_ANIMATION_FRAME_DELAY_MS, event -> advanceStartingAnimation());
+    new Timer(PRETTY_STARTING_ANIMATION_FRAME_DELAY_MS, event -> advanceStartingAnimation());
   private float startingAnimationOffset;
   private long lastStartingAnimationFrameNanos;
-  private final StartingBorder startingBorder = new StartingBorder(RUNNING_ACCENT, () -> startingAnimationOffset);
+  private Color primaryColor;
+  private StartingBorder startingBorder;
+  private Icon simpleStartingIcon;
   private final MessageBusConnection connection;
   private Map<String, RunnerAndConfigurationSettings> availableByName = Map.of();
   private Map<String, ServiceLauncherSettings.LauncherConfiguration> configurationsById = Map.of();
@@ -119,8 +123,13 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   {
     super(new BorderLayout());
     this.project = project;
+    preferences = ServiceLauncherPreferences.getInstance();
+    refreshPreferenceValues();
     configureUserInterface();
     connection = project.getMessageBus().connect(this);
+    MessageBusConnection preferencesConnection =
+      ApplicationManager.getApplication().getMessageBus().connect(this);
+    preferencesConnection.subscribe(ServiceLauncherPreferences.TOPIC, this::preferencesChanged);
     subscribeToExecutionEvents();
     subscribeToRunConfigurationEvents();
     rebuild();
@@ -236,6 +245,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     editButton.addActionListener(actionEvent -> editLauncherConfigurations());
     selectionToggleButton = iconButton(AllIcons.Actions.Selectall, "Select all visible services");
     selectionToggleButton.addActionListener(actionEvent -> toggleSelection(cards.keySet()));
+    selectionToggleButton.setVisible(preferences.showToggleAllButton());
     actions.add(editButton);
     actions.add(selectionToggleButton);
     return actions;
@@ -472,7 +482,8 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       groupCards,
       component -> installGroupPopup(component, title),
       () -> allSelected(itemIds),
-      () -> toggleSelection(itemIds)
+      () -> toggleSelection(itemIds),
+      preferences.showToggleAllButton()
     );
   }
 
@@ -829,10 +840,18 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       startingAnimationOffset = 0;
       lastStartingAnimationFrameNanos = 0;
     }
-    else if (!startingAnimationTimer.isRunning())
+    else
     {
-      lastStartingAnimationFrameNanos = System.nanoTime();
-      startingAnimationTimer.start();
+      int frameDelay = preferences.startupAnimation() == ServiceLauncherPreferences.StartupAnimation.PRETTY
+        ? PRETTY_STARTING_ANIMATION_FRAME_DELAY_MS
+        : SIMPLE_STARTING_ANIMATION_FRAME_DELAY_MS;
+      startingAnimationTimer.setDelay(frameDelay);
+      startingAnimationTimer.setInitialDelay(frameDelay);
+      if (!startingAnimationTimer.isRunning())
+      {
+        lastStartingAnimationFrameNanos = System.nanoTime();
+        startingAnimationTimer.start();
+      }
     }
   }
 
@@ -853,6 +872,37 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
         card.repaint();
       }
     }
+  }
+
+  /**
+   * Applies updated application-level preferences to the open launcher.
+   */
+  private void preferencesChanged()
+  {
+    ApplicationManager.getApplication().invokeLater(() ->
+    {
+      if (project.isDisposed())
+      {
+        return;
+      }
+      refreshPreferenceValues();
+      rebuild();
+    });
+  }
+
+  /**
+   * Refreshes preference values used while rendering service cards.
+   */
+  private void refreshPreferenceValues()
+  {
+    primaryColor = preferences.primaryColor();
+    startingBorder = new StartingBorder(primaryColor, () -> startingAnimationOffset);
+    simpleStartingIcon = new SimpleStartingIcon(primaryColor, () -> startingAnimationOffset);
+    if (selectionToggleButton != null)
+    {
+      selectionToggleButton.setVisible(preferences.showToggleAllButton());
+    }
+    synchronizeStartingAnimation();
   }
 
   /**
@@ -1471,6 +1521,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     private final JButton debug;
     private final JButton restart;
     private final JButton stop;
+    private final Icon launcherIcon;
     private final JBLabel serviceIcon;
     private final JBLabel nameLabel;
     private final Color normalTextColor;
@@ -1492,7 +1543,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       setPreferredSize(new Dimension(MIN_CARD_WIDTH, 48));
       setMinimumSize(new Dimension(140, 44));
 
-      Icon launcherIcon = LauncherIcons.get(launcherConfiguration);
+      launcherIcon = LauncherIcons.get(launcherConfiguration);
       serviceIcon = new JBLabel(launcherIcon);
       serviceIcon.setDisabledIcon(IconLoader.getDisabledIcon(launcherIcon));
       serviceIcon.setVerticalAlignment(SwingConstants.CENTER);
@@ -1696,24 +1747,36 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       boolean startingNow = pendingStarts.contains(launcherConfiguration.configurationName);
       if (startingNow)
       {
-        setBorder(startingBorder);
+        boolean prettyAnimation =
+          preferences.startupAnimation() == ServiceLauncherPreferences.StartupAnimation.PRETTY;
+        setBorder(prettyAnimation
+          ? startingBorder
+          : BorderFactory.createLineBorder(selectedNow ? SELECTED_BORDER : UNSELECTED_BORDER));
+        serviceIcon.setIcon(prettyAnimation ? launcherIcon : simpleStartingIcon);
+        serviceIcon.setDisabledIcon(prettyAnimation
+          ? IconLoader.getDisabledIcon(launcherIcon)
+          : simpleStartingIcon);
       }
       else
       {
         Color borderColor = runningNow
-          ? RUNNING_ACCENT
-          : (selectedNow ? MUTED_BORDER : UNSELECTED_BORDER);
+          ? primaryColor
+          : (selectedNow ? SELECTED_BORDER : UNSELECTED_BORDER);
         setBorder(BorderFactory.createLineBorder(borderColor, runningNow ? RUNNING_BORDER_WIDTH : 1));
+        serviceIcon.setIcon(launcherIcon);
+        serviceIcon.setDisabledIcon(IconLoader.getDisabledIcon(launcherIcon));
       }
       setBackground(selectedNow ? CARD_BACKGROUND : UNSELECTED_CARD_BACKGROUND);
       serviceIcon.setEnabled(selectedNow);
       nameLabel.setForeground(selectedNow ? normalTextColor : UNSELECTED_TEXT);
       boolean canStart = settings != null && !runningNow && !startingNow;
-      run.setVisible(canStart);
-      debug.setVisible(canStart);
-      restart.setVisible(runningNow);
-      stop.setVisible(runningNow);
-      actions.setVisible(canStart || runningNow);
+      boolean showStartControls = canStart && preferences.perConfigStartDebugButtons();
+      boolean showRunningControls = runningNow && preferences.perConfigRestartStopButtons();
+      run.setVisible(showStartControls);
+      debug.setVisible(showStartControls);
+      restart.setVisible(showRunningControls);
+      stop.setVisible(showRunningControls);
+      actions.setVisible(showStartControls || showRunningControls);
       repaint();
     }
 
