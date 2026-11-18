@@ -38,6 +38,7 @@ import javax.swing.BoxLayout;
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JFileChooser;
 import javax.swing.JLayeredPane;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
@@ -47,6 +48,7 @@ import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -59,6 +61,8 @@ import java.awt.Graphics2D;
 import java.awt.Point;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -246,12 +250,12 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   {
     JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     actions.setOpaque(false);
-    JButton editButton = iconButton(AllIcons.Actions.Edit, "Customize services");
-    editButton.addActionListener(actionEvent -> editLauncherConfigurations());
+    JButton addServicesButton = iconButton(AllIcons.General.Add, "Add services from Rider run configurations");
+    addServicesButton.addActionListener(actionEvent -> addServicesFromRider());
     selectionToggleButton = iconButton(AllIcons.Actions.Selectall, "Select all visible services");
     selectionToggleButton.addActionListener(actionEvent -> toggleSelection(cards.keySet()));
     selectionToggleButton.setVisible(preferences.showToggleAllButton());
-    actions.add(editButton);
+    actions.add(addServicesButton);
     actions.add(selectionToggleButton);
     return actions;
   }
@@ -642,6 +646,19 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     selectNoneItem.addActionListener(actionEvent -> selectNone());
     menu.add(selectAllItem);
     menu.add(selectNoneItem);
+    if (launcherConfigurations().stream().anyMatch(configuration -> !configuration.visible))
+    {
+      JMenuItem showHidden = new JMenuItem("Show hidden services");
+      showHidden.addActionListener(actionEvent -> showHiddenServices());
+      menu.add(showHidden);
+    }
+    menu.addSeparator();
+    JMenuItem importItem = new JMenuItem("Import launcher configuration…");
+    importItem.addActionListener(actionEvent -> importLauncherConfiguration());
+    JMenuItem exportItem = new JMenuItem("Export launcher configuration…");
+    exportItem.addActionListener(actionEvent -> exportLauncherConfiguration());
+    menu.add(importItem);
+    menu.add(exportItem);
     menu.show((Component) event.getSource(), event.getX(), event.getY());
   }
 
@@ -931,17 +948,119 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   }
 
   /**
-   * Edits the launcher configurations.
+   * Adds the chosen Rider run configurations to the launcher as visible services.
    */
-  private void editLauncherConfigurations()
+  private void addServicesFromRider()
   {
-    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
-    ServiceLauncherSettingsDialog dialog = new ServiceLauncherSettingsDialog(project, current);
-    if (dialog.showAndGet())
+    ServiceLauncherSettings settings = ServiceLauncherSettings.getInstance(project);
+    List<String> candidates = settings.unlinkedConfigurationNames(availableConfigurations().keySet());
+    if (candidates.isEmpty())
     {
-      ServiceLauncherSettings.getInstance(project).replaceWith(dialog.getConfigurations());
+      Messages.showInfoMessage(project, "There are no unlinked permanent Rider run configurations to add.",
+        "Add Services from Rider");
+      return;
+    }
+    List<String> groups = settings.groupNames();
+    List<String> destinations = groups.isEmpty() ? List.of(ServiceLauncherSettings.DEFAULT_GROUP) : groups;
+    AddServicesDialog dialog = new AddServicesDialog(project, candidates, destinations);
+    if (!dialog.showAndGet())
+    {
+      return;
+    }
+    Set<String> chosen = new HashSet<>(dialog.selectedConfigurations());
+    List<String> stillAvailable = availableConfigurations().keySet().stream().filter(chosen::contains).toList();
+    int added = settings.addServicesFromRunConfigurations(stillAvailable, dialog.selectedGroup());
+    if (added > 0)
+    {
       rebuild();
     }
+    if (added < chosen.size())
+    {
+      Messages.showInfoMessage(project, "One or more selected run configurations were no longer available to add.",
+        "Add Services from Rider");
+    }
+  }
+
+  /**
+   * Restores visibility for services hidden by a previous launcher version or an imported file.
+   */
+  private void showHiddenServices()
+  {
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    current.forEach(configuration -> configuration.visible = true);
+    ServiceLauncherSettings.getInstance(project).replaceWith(current);
+    rebuild();
+  }
+
+  /**
+   * Merges a launcher configuration file into the project after confirmation.
+   */
+  private void importLauncherConfiguration()
+  {
+    JFileChooser chooser = launcherFileChooser("Import Service Launcher Configuration");
+    if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION)
+    {
+      return;
+    }
+    try
+    {
+      List<ServiceLauncherSettings.LauncherConfiguration> imported =
+        LauncherConfigurationIO.importFrom(chooser.getSelectedFile());
+      int choice = Messages.showYesNoDialog(project,
+        "Import this launcher configuration? Matching services will be updated.",
+        "Import Service Launcher Configuration", "Import", "Cancel", Messages.getQuestionIcon());
+      if (choice == Messages.YES)
+      {
+        ServiceLauncherSettings.getInstance(project).replaceWith(
+          LauncherConfigurationIO.merge(launcherConfigurations(), imported));
+        rebuild();
+      }
+    }
+    catch (IOException exception)
+    {
+      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Import Configuration");
+    }
+  }
+
+  /**
+   * Saves the launcher configurations to an export file.
+   */
+  private void exportLauncherConfiguration()
+  {
+    JFileChooser chooser = launcherFileChooser("Export Service Launcher Configuration");
+    String extension = "." + LauncherConfigurationIO.FILE_EXTENSION;
+    chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), "services" + extension));
+    if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION)
+    {
+      return;
+    }
+    File file = chooser.getSelectedFile();
+    if (!file.getName().endsWith(extension))
+    {
+      file = new File(file.getParentFile(), file.getName() + extension);
+    }
+    try
+    {
+      LauncherConfigurationIO.exportTo(file, launcherConfigurations());
+    }
+    catch (IOException exception)
+    {
+      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Export Configuration");
+    }
+  }
+
+  /**
+   * Creates a chooser for launcher configuration files in the project directory.
+   *
+   * @param title the title for the file chooser
+   * @return the configured file chooser
+   */
+  private JFileChooser launcherFileChooser(String title)
+  {
+    JFileChooser chooser = new JFileChooser(project.getBasePath());
+    chooser.setDialogTitle(title);
+    chooser.setFileFilter(new FileNameExtensionFilter("Service Launcher export (*.service-launcher.xml)", "xml"));
+    return chooser;
   }
 
   /**

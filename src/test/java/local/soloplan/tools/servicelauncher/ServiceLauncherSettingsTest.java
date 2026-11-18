@@ -141,6 +141,56 @@ public class ServiceLauncherSettingsTest
   }
 
   /**
+   * Excludes linked services and returning links while leaving standalone display names available.
+   */
+  @Test
+  public void bulkAddOffersOnlyUnclaimedConfigurationNames()
+  {
+    ServiceLauncherSettings settings = new ServiceLauncherSettings();
+    ServiceLauncherSettings.LauncherConfiguration hidden = new ServiceLauncherSettings.LauncherConfiguration("Orders", 0);
+    ServiceLauncherSettings.LauncherConfiguration returning = new ServiceLauncherSettings.LauncherConfiguration("", 1);
+    returning.expectedConfigurationName = "Payments";
+    ServiceLauncherSettings.LauncherConfiguration standalone = new ServiceLauncherSettings.LauncherConfiguration("", 2);
+    standalone.displayName = "Inventory";
+    settings.replaceWith(List.of(hidden, returning, standalone));
+
+    assertEquals(List.of("Inventory", "Shipping"),
+      settings.unlinkedConfigurationNames(List.of("Orders", "Inventory", "Payments", "Shipping")));
+    assertEquals(0, settings.addServicesFromRunConfigurations(List.of("Orders", "Payments"), "Backend"));
+    assertEquals(List.of(ServiceLauncherSettings.DEFAULT_GROUP), settings.groupNames());
+  }
+
+  /**
+   * Persists only the selected additions as visible links at the end of the destination group.
+   */
+  @Test
+  public void bulkAddAppendsVisibleServicesAndPreservesExistingEntriesAfterReload()
+  {
+    ServiceLauncherSettings settings = new ServiceLauncherSettings();
+    ServiceLauncherSettings.LauncherConfiguration existing = new ServiceLauncherSettings.LauncherConfiguration("", 0);
+    existing.displayName = "Standalone";
+    existing.group = "Backend";
+    existing.visible = true;
+    settings.replaceWith(List.of(existing));
+    List<String> available = List.of("Inventory", "Orders", "Shipping");
+
+    assertEquals(2, settings.addServicesFromRunConfigurations(List.of("Inventory", "Shipping", "Shipping"), "Backend"));
+    assertEquals(0, settings.addServicesFromRunConfigurations(List.of("Inventory", "Shipping"), "Backend"));
+
+    Element serialized = XmlSerializer.serialize(settings.getState());
+    ServiceLauncherSettings reloaded = new ServiceLauncherSettings();
+    reloaded.loadState(XmlSerializer.deserialize(serialized, ServiceLauncherSettings.StateData.class));
+    List<ServiceLauncherSettings.LauncherConfiguration> services = reloaded.reconciledWith(available);
+    assertEquals(List.of("Standalone", "Inventory", "Shipping"), services.stream().map(item -> item.displayName).toList());
+    assertEquals(List.of("", "Inventory", "Shipping"), services.stream().map(item -> item.configurationName).toList());
+    assertEquals(List.of(0, 1, 2), services.stream().map(item -> item.order).toList());
+    assertEquals(existing.itemId, services.getFirst().itemId);
+    assertEquals(3, services.stream().map(item -> item.itemId).distinct().count());
+    assertTrue(services.stream().allMatch(item -> item.visible && "Backend".equals(item.group)));
+    assertEquals(List.of("Orders"), reloaded.unlinkedConfigurationNames(available));
+  }
+
+  /**
    * Performs the group names are unique ignoring case operation.
    */
   @Test

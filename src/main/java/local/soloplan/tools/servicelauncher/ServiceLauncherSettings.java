@@ -19,6 +19,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -202,6 +203,54 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
     state.services.addAll(snapshot);
     normalizeOrders(state.services);
     ensureGroups();
+  }
+
+  /**
+   * Finds available Rider configurations that can be added as new services.
+   *
+   * @param availableNames the permanent Rider run configuration names
+   * @return the unclaimed names in discovery order
+   */
+  List<String> unlinkedConfigurationNames(Collection<String> availableNames)
+  {
+    Set<String> claimedNames = new HashSet<>();
+    for (LauncherConfiguration item : state.services)
+    {
+      claimedNames.add(safe(item.configurationName));
+      claimedNames.add(safe(item.expectedConfigurationName));
+    }
+    return availableNames.stream()
+      .filter(name -> !name.isBlank() && !claimedNames.contains(name))
+      .distinct()
+      .toList();
+  }
+
+  /**
+   * Appends visible services for the chosen Rider configurations that still have no launcher entry.
+   *
+   * @param configurationNames the chosen run configuration names that are still available
+   * @param groupName the destination group
+   * @return the number of services added
+   */
+  int addServicesFromRunConfigurations(Collection<String> configurationNames, String groupName)
+  {
+    List<String> additions = unlinkedConfigurationNames(configurationNames);
+    if (additions.isEmpty())
+    {
+      return 0;
+    }
+    String group = normalizeGroup(groupName);
+    normalizeOrders(state.services);
+    int order = (int) state.services.stream().filter(item -> group.equals(item.group)).count();
+    for (String name : additions)
+    {
+      LauncherConfiguration service = new LauncherConfiguration(name, order++);
+      service.group = group;
+      service.visible = true;
+      state.services.add(service);
+    }
+    ensureGroups();
+    return additions.size();
   }
 
   /**
