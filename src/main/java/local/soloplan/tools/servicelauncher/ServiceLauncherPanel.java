@@ -7,14 +7,18 @@
 
 package local.soloplan.tools.servicelauncher;
 
+import com.intellij.execution.ExecutionException;
 import com.intellij.execution.ExecutionListener;
 import com.intellij.execution.ExecutionManager;
+import com.intellij.execution.ExecutionTarget;
+import com.intellij.execution.ExecutionTargetManager;
 import com.intellij.execution.ProgramRunnerUtil;
 import com.intellij.execution.RunManager;
 import com.intellij.execution.RunManagerListener;
 import com.intellij.execution.RunnerAndConfigurationSettings;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.runners.ExecutionEnvironment;
+import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
@@ -781,15 +785,35 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   }
 
   /**
-   * Performs the launch operation.
+   * Launches the configuration on a compatible target without changing the IDE toolbar selection.
    *
    * @param settings the settings
    * @param mode the mode
    */
   private void launch(RunnerAndConfigurationSettings settings, ExecutionMode mode)
   {
+    ExecutionTarget target = ExecutionTargetManager.getInstance(project).findTarget(settings.getConfiguration());
+    if (target == null)
+    {
+      clearStarting(settings.getName());
+      Messages.showErrorDialog(project, "No compatible execution target is available for '" + settings.getName() + "'.",
+        "Service Launcher");
+      return;
+    }
+
+    ExecutionEnvironment environment;
+    try
+    {
+      environment = ExecutionEnvironmentBuilder.create(mode.executor(), settings).target(target).build();
+    }
+    catch (ExecutionException exception)
+    {
+      clearStarting(settings.getName());
+      Messages.showErrorDialog(project, exception.getMessage(), "Service Launcher");
+      return;
+    }
     markStarting(List.of(settings.getName()));
-    ProgramRunnerUtil.executeConfiguration(settings, mode.executor());
+    ProgramRunnerUtil.executeConfiguration(environment, true, true);
   }
 
   /**
