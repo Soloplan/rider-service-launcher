@@ -7,7 +7,7 @@
 
 plugins {
   java
-  id("org.jetbrains.intellij.platform") version "2.9.0"
+  id("org.jetbrains.intellij.platform") version "2.20.1"
 }
 
 group = "local.soloplan.tools"
@@ -22,14 +22,21 @@ repositories {
 
 dependencies {
   intellijPlatform {
-    local("C:/Program Files/JetBrains/JetBrains Rider 2025.2.2.1")
+    val localRiderPath = providers.gradleProperty("localRiderPath").orNull
+    if (localRiderPath == null) {
+      rider("2026.3") {
+        useInstaller = false
+      }
+    } else {
+      local(localRiderPath)
+    }
   }
   testImplementation("junit:junit:4.13.2")
 }
 
 java {
   toolchain {
-    languageVersion = JavaLanguageVersion.of(21)
+    languageVersion = JavaLanguageVersion.of(25)
   }
 }
 
@@ -42,7 +49,7 @@ intellijPlatform {
 
   pluginConfiguration {
     ideaVersion {
-      sinceBuild = "252"
+      sinceBuild = "263"
       untilBuild = provider { null }
     }
   }

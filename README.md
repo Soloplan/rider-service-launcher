@@ -53,18 +53,26 @@ Download the plugin ZIP from the GitHub release. In Rider:
 3. Select the downloaded ZIP and restart Rider when prompted.
 4. Open **View | Tool Windows | Service Launcher**.
 
-The plugin supports Rider 2025.2 and later.
+The plugin supports Rider 2026.3 and later.
 
 ## Building from source
 
-The Gradle wrapper requires Java. Rider's bundled runtime can be used from PowerShell:
+Run the Gradle wrapper with JDK 25. Gradle downloads and caches Rider 2026.3 on the first build.
+
+```bash
+bash ./gradlew buildPlugin
+```
+
+On Windows, use PowerShell.
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\JetBrains\JetBrains Rider 2025.2.2.1\jbr'
 .\gradlew.bat buildPlugin
 ```
 
 The resulting ZIP is written to `build/distributions`.
+
+To use an existing Rider installation, pass `-PlocalRiderPath="/path/to/Rider"` or set `localRiderPath` in your
+user-level Gradle properties. Use a local Rider 2026.3 installation to match the default SDK.
 
 For plugin development, run:
 
