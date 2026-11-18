@@ -9,47 +9,35 @@ package local.soloplan.tools.servicelauncher;
 
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
-import com.intellij.openapi.ui.Messages;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.JBTextField;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
-import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.JFileChooser;
 import javax.swing.JPanel;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
-import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.io.File;
-import java.io.IOException;
-import java.nio.file.Files;
-import java.util.Base64;
 
 /**
  * Represents a launcher configuration dialog.
  */
 final class LauncherConfigurationDialog extends DialogWrapper
 {
-  private static final long MAX_ICON_BYTES = 5 * 1024 * 1024;
   private static final String NOT_LINKED = "<Not linked>";
 
-  private final Project project;
   private final ServiceLauncherSettings.LauncherConfiguration configuration;
   private final JBTextField displayNameField = new JBTextField();
   private final JComboBox<String> runConfigurationSelector;
   private final JComboBox<String> groupSelector;
-  private final JComboBox<String> iconSelector = new JComboBox<>(LauncherIcons.keys());
   private final JSpinner orderSpinner;
-  private final JBLabel iconPreview = new JBLabel();
-  private final JBLabel customIconDescription = new JBLabel();
+  private final LauncherIconEditor iconEditor;
 
   /**
    * Creates a new {@code LauncherConfigurationDialog} instance.
@@ -60,13 +48,13 @@ final class LauncherConfigurationDialog extends DialogWrapper
   LauncherConfigurationDialog(Project project, LauncherConfigurationDialogRequest request)
   {
     super(project);
-    this.project = project;
     ServiceLauncherSettings.LauncherConfiguration source = request.source();
     LauncherConfigurationEditorOptions options = request.options();
     configuration = source.copy();
     groupSelector = createGroupSelector(options);
     runConfigurationSelector = createRunConfigurationSelector(options);
     orderSpinner = createOrderSpinner(options.maximumOrder());
+    iconEditor = new LauncherIconEditor(project, configuration);
     configureDialog(request);
     init();
   }
@@ -165,7 +153,6 @@ final class LauncherConfigurationDialog extends DialogWrapper
   {
     populateFields();
     JPanel panel = createFormPanel();
-    refreshPreview();
     return panel;
   }
 
@@ -176,39 +163,6 @@ final class LauncherConfigurationDialog extends DialogWrapper
   {
     displayNameField.setText(configuration.displayName);
     groupSelector.setSelectedItem(ServiceLauncherSettings.normalizeGroup(configuration.group));
-    iconSelector.setSelectedItem(configuration.icon);
-    iconSelector.addActionListener(actionEvent -> useSelectedBuiltInIcon());
-  }
-
-  /**
-   * Creates the icon actions.
-   *
-   * @return the create icon actions result
-   */
-  private JPanel createIconActions()
-  {
-    JButton chooseIcon = new JButton("Choose image…");
-    chooseIcon.addActionListener(actionEvent -> chooseCustomIcon());
-    JButton clearIcon = new JButton("Use built-in");
-    clearIcon.addActionListener(actionEvent -> useBuiltInIcon());
-    JPanel iconActions = new JPanel();
-    iconActions.add(iconSelector);
-    iconActions.add(chooseIcon);
-    iconActions.add(clearIcon);
-    return iconActions;
-  }
-
-  /**
-   * Creates the preview panel.
-   *
-   * @return the create preview panel result
-   */
-  private JPanel createPreviewPanel()
-  {
-    JPanel previewPanel = new JPanel(new BorderLayout(8, 0));
-    previewPanel.add(iconPreview, BorderLayout.WEST);
-    previewPanel.add(customIconDescription, BorderLayout.CENTER);
-    return previewPanel;
   }
 
   /**
@@ -224,29 +178,9 @@ final class LauncherConfigurationDialog extends DialogWrapper
     addRow(panel, 1, "Display name", displayNameField);
     addRow(panel, 2, "Group", groupSelector);
     addRow(panel, 3, "Order in group", orderSpinner);
-    addRow(panel, 4, "Icon", createIconActions());
-    addRow(panel, 5, "Preview", createPreviewPanel());
+    addRow(panel, 4, "Icon", iconEditor);
     panel.setPreferredSize(new Dimension(620, 260));
     return panel;
-  }
-
-  /**
-   * Performs the use selected built in icon operation.
-   */
-  private void useSelectedBuiltInIcon()
-  {
-    configuration.icon = String.valueOf(iconSelector.getSelectedItem());
-    useBuiltInIcon();
-  }
-
-  /**
-   * Performs the use built in icon operation.
-   */
-  private void useBuiltInIcon()
-  {
-    configuration.customIconName = "";
-    configuration.customIconData = "";
-    refreshPreview();
   }
 
   /**
@@ -273,79 +207,6 @@ final class LauncherConfigurationDialog extends DialogWrapper
     componentConstraints.fill = GridBagConstraints.HORIZONTAL;
     componentConstraints.insets = new Insets(6, 4, 6, 4);
     panel.add(component, componentConstraints);
-  }
-
-  /**
-   * Performs the choose custom icon operation.
-   */
-  private void chooseCustomIcon()
-  {
-    JFileChooser chooser = createIconChooser();
-    if (chooser.showOpenDialog(getContentPanel()) == JFileChooser.APPROVE_OPTION)
-    {
-      loadCustomIcon(chooser.getSelectedFile());
-    }
-  }
-
-  /**
-   * Creates the icon chooser.
-   *
-   * @return the create icon chooser result
-   */
-  private JFileChooser createIconChooser()
-  {
-    JFileChooser chooser = new JFileChooser(project.getBasePath());
-    chooser.setDialogTitle("Choose service icon");
-    chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-      "Images (SVG, PNG, JPEG, GIF)", "svg", "png", "jpg", "jpeg", "gif"
-    ));
-    return chooser;
-  }
-
-  /**
-   * Loads the custom icon.
-   *
-   * @param file the file
-   */
-  private void loadCustomIcon(File file)
-  {
-    try
-    {
-      byte[] bytes = Files.readAllBytes(file.toPath());
-      validateIconSize(bytes);
-      configuration.customIconName = file.getName();
-      configuration.customIconData = Base64.getEncoder().encodeToString(bytes);
-      refreshPreview();
-    }
-    catch (IOException exception)
-    {
-      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Load Icon");
-    }
-  }
-
-  /**
-   * Performs the validate icon size operation.
-   *
-   * @param bytes the bytes
-   * @throws IOException if the operation cannot be completed
-   */
-  private void validateIconSize(byte[] bytes) throws IOException
-  {
-    if (bytes.length == 0 || bytes.length > MAX_ICON_BYTES)
-    {
-      throw new IOException("Icons must be between 1 byte and 5 MB.");
-    }
-  }
-
-  /**
-   * Refreshes the preview.
-   */
-  private void refreshPreview()
-  {
-    iconPreview.setIcon(LauncherIcons.get(configuration));
-    customIconDescription.setText(configuration.customIconData == null || configuration.customIconData.isBlank()
-      ? "Built-in: " + configuration.icon
-      : configuration.customIconName + " (embedded)");
   }
 
   /**

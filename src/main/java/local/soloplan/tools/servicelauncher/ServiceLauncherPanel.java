@@ -23,13 +23,16 @@ import com.intellij.icons.AllIcons;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.ui.DialogBuilder;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.ui.AnimatedIcon;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.components.JBScrollPane;
+import com.intellij.ui.components.JBTextField;
 import com.intellij.util.messages.MessageBusConnection;
+import com.intellij.util.ui.UIUtil;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.BorderFactory;
@@ -38,15 +41,19 @@ import javax.swing.BoxLayout;
 import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JFileChooser;
 import javax.swing.JLayeredPane;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.border.Border;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -56,9 +63,20 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.dnd.DragSource;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -76,8 +94,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 final class ServiceLauncherPanel extends JPanel implements Disposable
 {
-  private static final int MIN_CARD_WIDTH = 180;
   private static final int RUNNING_BORDER_WIDTH = 2;
+  private static final int DRAG_SCROLL_MARGIN = 24;
+  private static final int DRAG_SCROLL_STEP = 16;
   private static final int PRETTY_STARTING_ANIMATION_FRAME_DELAY_MS = 16;
   private static final int SIMPLE_STARTING_ANIMATION_FRAME_DELAY_MS = 100;
   private static final float STARTING_ANIMATION_SPEED_PX_PER_SECOND = 87.5f;
@@ -90,6 +109,8 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     new JBColor(new Color(0xB8B8B8), new Color(0x515151));
   private static final Color SELECTED_BORDER =
     new JBColor(new Color(0x8A8A8A), new Color(0x737373));
+  private static final Color EDIT_UNSELECTED_BORDER =
+    new JBColor(new Color(0x858585), new Color(0x777777));
   private final Project project;
   private final ServiceLauncherPreferences preferences;
   private final VerticalScrollablePanel groupsPanel = new VerticalScrollablePanel();
@@ -103,6 +124,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   private final AtomicBoolean rebuildScheduled = new AtomicBoolean();
   private final Timer startingAnimationTimer =
     new Timer(PRETTY_STARTING_ANIMATION_FRAME_DELAY_MS, event -> advanceStartingAnimation());
+  private final Timer dragScrollTimer = new Timer(40, event -> scrollDuringCardDrag());
   private float startingAnimationOffset;
   private long lastStartingAnimationFrameNanos;
   private Color primaryColor;
@@ -117,6 +139,16 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   private JButton restartAllButton;
   private JButton stopAllButton;
   private JButton selectionToggleButton;
+  private JButton editModeButton;
+  private JButton doneEditingButton;
+  private boolean editing;
+  private ServiceCard renamingCard;
+  private ServiceCard draggedCard;
+  private ServiceCardGrid dragSourceGrid;
+  private BufferedImage dragPreview;
+  private Point dragPointer;
+  private ServiceGroupPanel dropGroup;
+  private int dropSlot;
   private final Icon startingIcon = new AnimatedIcon.Default();
 
   /**
@@ -246,14 +278,35 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   {
     JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     actions.setOpaque(false);
-    JButton editButton = iconButton(AllIcons.Actions.Edit, "Customize services");
-    editButton.addActionListener(actionEvent -> editLauncherConfigurations());
+    JButton addServicesButton = iconButton(AllIcons.General.Add, "Add services from Rider run configurations");
+    addServicesButton.addActionListener(actionEvent -> addServicesFromRider());
+    editModeButton = iconButton(AllIcons.Actions.Edit, "Edit services");
+    editModeButton.addActionListener(actionEvent -> setEditing(true));
+    doneEditingButton = new JButton("Done");
+    doneEditingButton.addActionListener(actionEvent -> setEditing(false));
+    doneEditingButton.setVisible(false);
     selectionToggleButton = iconButton(AllIcons.Actions.Selectall, "Select all visible services");
     selectionToggleButton.addActionListener(actionEvent -> toggleSelection(cards.keySet()));
     selectionToggleButton.setVisible(preferences.showToggleAllButton());
-    actions.add(editButton);
+    actions.add(addServicesButton);
+    actions.add(editModeButton);
+    actions.add(doneEditingButton);
     actions.add(selectionToggleButton);
     return actions;
+  }
+
+  /**
+   * Switches between launching services and editing their cards.
+   *
+   * @param value whether editing is active
+   */
+  private void setEditing(boolean value)
+  {
+    editing = value;
+    editModeButton.setVisible(!editing);
+    doneEditingButton.setVisible(editing);
+    selectionToggleButton.setVisible(!editing && preferences.showToggleAllButton());
+    rebuild();
   }
 
   /**
@@ -297,6 +350,11 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
    */
   private void rebuild()
   {
+    if (renamingCard != null)
+    {
+      renamingCard.finishRename(true);
+    }
+    clearCardDrag();
     cards.clear();
     cardsByConfiguration.clear();
     groupPanels.clear();
@@ -488,7 +546,9 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       component -> installGroupPopup(component, title),
       () -> allSelected(itemIds),
       () -> toggleSelection(itemIds),
-      preferences.showToggleAllButton()
+      !editing && preferences.showToggleAllButton(),
+      editing,
+      groupsPanel.getWidth()
     );
   }
 
@@ -642,6 +702,19 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     selectNoneItem.addActionListener(actionEvent -> selectNone());
     menu.add(selectAllItem);
     menu.add(selectNoneItem);
+    if (launcherConfigurations().stream().anyMatch(configuration -> !configuration.visible))
+    {
+      JMenuItem showHidden = new JMenuItem("Show hidden services");
+      showHidden.addActionListener(actionEvent -> showHiddenServices());
+      menu.add(showHidden);
+    }
+    menu.addSeparator();
+    JMenuItem importItem = new JMenuItem("Import launcher configuration…");
+    importItem.addActionListener(actionEvent -> importLauncherConfiguration());
+    JMenuItem exportItem = new JMenuItem("Export launcher configuration…");
+    exportItem.addActionListener(actionEvent -> exportLauncherConfiguration());
+    menu.add(importItem);
+    menu.add(exportItem);
     menu.show((Component) event.getSource(), event.getX(), event.getY());
   }
 
@@ -925,23 +998,125 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     simpleStartingIcon = new SimpleStartingIcon(primaryColor, () -> startingAnimationOffset);
     if (selectionToggleButton != null)
     {
-      selectionToggleButton.setVisible(preferences.showToggleAllButton());
+      selectionToggleButton.setVisible(!editing && preferences.showToggleAllButton());
     }
     synchronizeStartingAnimation();
   }
 
   /**
-   * Edits the launcher configurations.
+   * Adds the chosen Rider run configurations to the launcher as visible services.
    */
-  private void editLauncherConfigurations()
+  private void addServicesFromRider()
   {
-    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
-    ServiceLauncherSettingsDialog dialog = new ServiceLauncherSettingsDialog(project, current);
-    if (dialog.showAndGet())
+    ServiceLauncherSettings settings = ServiceLauncherSettings.getInstance(project);
+    List<String> candidates = settings.unlinkedConfigurationNames(availableConfigurations().keySet());
+    if (candidates.isEmpty())
     {
-      ServiceLauncherSettings.getInstance(project).replaceWith(dialog.getConfigurations());
+      Messages.showInfoMessage(project, "There are no unlinked permanent Rider run configurations to add.",
+        "Add Services from Rider");
+      return;
+    }
+    List<String> groups = settings.groupNames();
+    List<String> destinations = groups.isEmpty() ? List.of(ServiceLauncherSettings.DEFAULT_GROUP) : groups;
+    AddServicesDialog dialog = new AddServicesDialog(project, candidates, destinations);
+    if (!dialog.showAndGet())
+    {
+      return;
+    }
+    Set<String> chosen = new HashSet<>(dialog.selectedConfigurations());
+    List<String> stillAvailable = availableConfigurations().keySet().stream().filter(chosen::contains).toList();
+    int added = settings.addServicesFromRunConfigurations(stillAvailable, dialog.selectedGroup());
+    if (added > 0)
+    {
       rebuild();
     }
+    if (added < chosen.size())
+    {
+      Messages.showInfoMessage(project, "One or more selected run configurations were no longer available to add.",
+        "Add Services from Rider");
+    }
+  }
+
+  /**
+   * Restores visibility for services hidden by a previous launcher version or an imported file.
+   */
+  private void showHiddenServices()
+  {
+    List<ServiceLauncherSettings.LauncherConfiguration> current = launcherConfigurations();
+    current.forEach(configuration -> configuration.visible = true);
+    ServiceLauncherSettings.getInstance(project).replaceWith(current);
+    rebuild();
+  }
+
+  /**
+   * Merges a launcher configuration file into the project after confirmation.
+   */
+  private void importLauncherConfiguration()
+  {
+    JFileChooser chooser = launcherFileChooser("Import Service Launcher Configuration");
+    if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION)
+    {
+      return;
+    }
+    try
+    {
+      List<ServiceLauncherSettings.LauncherConfiguration> imported =
+        LauncherConfigurationIO.importFrom(chooser.getSelectedFile());
+      int choice = Messages.showYesNoDialog(project,
+        "Import this launcher configuration? Matching services will be updated.",
+        "Import Service Launcher Configuration", "Import", "Cancel", Messages.getQuestionIcon());
+      if (choice == Messages.YES)
+      {
+        ServiceLauncherSettings.getInstance(project).replaceWith(
+          LauncherConfigurationIO.merge(launcherConfigurations(), imported));
+        rebuild();
+      }
+    }
+    catch (IOException exception)
+    {
+      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Import Configuration");
+    }
+  }
+
+  /**
+   * Saves the launcher configurations to an export file.
+   */
+  private void exportLauncherConfiguration()
+  {
+    JFileChooser chooser = launcherFileChooser("Export Service Launcher Configuration");
+    String extension = "." + LauncherConfigurationIO.FILE_EXTENSION;
+    chooser.setSelectedFile(new File(chooser.getCurrentDirectory(), "services" + extension));
+    if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION)
+    {
+      return;
+    }
+    File file = chooser.getSelectedFile();
+    if (!file.getName().endsWith(extension))
+    {
+      file = new File(file.getParentFile(), file.getName() + extension);
+    }
+    try
+    {
+      LauncherConfigurationIO.exportTo(file, launcherConfigurations());
+    }
+    catch (IOException exception)
+    {
+      Messages.showErrorDialog(project, exception.getMessage(), "Could Not Export Configuration");
+    }
+  }
+
+  /**
+   * Creates a chooser for launcher configuration files in the project directory.
+   *
+   * @param title the title for the file chooser
+   * @return the configured file chooser
+   */
+  private JFileChooser launcherFileChooser(String title)
+  {
+    JFileChooser chooser = new JFileChooser(project.getBasePath());
+    chooser.setDialogTitle(title);
+    chooser.setFileFilter(new FileNameExtensionFilter("Service Launcher export (*.service-launcher.xml)", "xml"));
+    return chooser;
   }
 
   /**
@@ -1152,6 +1327,175 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     applyEditedLauncherConfiguration(current, edited);
     ServiceLauncherSettings.getInstance(project).replaceWith(current);
     rebuild();
+  }
+
+  /**
+   * Captures the card before the source grid makes room for the drag.
+   *
+   * @param card the source card
+   * @param event the latest pointer event
+   */
+  private void startCardDrag(ServiceCard card, MouseEvent event)
+  {
+    if (!(card.getParent() instanceof ServiceCardGrid grid) || card.getWidth() <= 0 || card.getHeight() <= 0)
+    {
+      return;
+    }
+    dragPreview = UIUtil.createImage(card, card.getWidth(), card.getHeight(), BufferedImage.TYPE_INT_ARGB);
+    Graphics2D graphics = dragPreview.createGraphics();
+    try
+    {
+      card.printAll(graphics);
+    }
+    finally
+    {
+      graphics.dispose();
+    }
+    draggedCard = card;
+    dragSourceGrid = grid;
+    grid.setDraggedCard(card);
+    updateCardDrag(event);
+    dragScrollTimer.start();
+  }
+
+  /**
+   * Tracks the pointer in viewport coordinates so moving cards and scrolling can leave it in place.
+   *
+   * @param event the latest pointer event
+   */
+  private void updateCardDrag(MouseEvent event)
+  {
+    Rectangle visible = groupsPanel.getVisibleRect();
+    Point pointer = event.getLocationOnScreen();
+    SwingUtilities.convertPointFromScreen(pointer, groupsPanel);
+    pointer.translate(-visible.x, -visible.y);
+    if (!pointer.equals(dragPointer))
+    {
+      dragPointer = pointer;
+      updateCardDropTarget();
+    }
+  }
+
+  /**
+   * Resolves the group under the pointer and reserves space for the faded card.
+   */
+  private void updateCardDropTarget()
+  {
+    Rectangle visible = groupsPanel.getVisibleRect();
+    Point pointer = new Point(visible.x + dragPointer.x, visible.y + dragPointer.y);
+    ServiceGroupPanel target = visible.contains(pointer)
+      ? groupPanels.stream().filter(group -> group.getBounds().contains(pointer)).findFirst().orElse(null)
+      : null;
+    if (dropGroup != null && dropGroup != target)
+    {
+      dropGroup.cardGrid().setPreview(null, -1);
+    }
+    dropGroup = target;
+    if (target != null)
+    {
+      ServiceCardGrid grid = target.cardGrid();
+      dropSlot = grid.insertionAt(SwingUtilities.convertPoint(groupsPanel, pointer, grid));
+      grid.setPreview(dragPreview, dropSlot);
+    }
+  }
+
+  /**
+   * Scrolls the launcher when the drag pointer reaches a vertical edge of the viewport.
+   */
+  private void scrollDuringCardDrag()
+  {
+    if (dragPointer == null)
+    {
+      return;
+    }
+    Rectangle visible = groupsPanel.getVisibleRect();
+    if (dragPointer.x < 0 || dragPointer.x >= visible.width || dragPointer.y < 0 || dragPointer.y >= visible.height)
+    {
+      return;
+    }
+    int margin = Math.min(DRAG_SCROLL_MARGIN, visible.height / 3);
+    int direction = dragPointer.y < margin ? -1 : (dragPointer.y >= visible.height - margin ? 1 : 0);
+    int maxY = Math.max(0, groupsPanel.getHeight() - visible.height);
+    int y = Math.clamp(visible.y + direction * DRAG_SCROLL_STEP, 0, maxY);
+    if (y != visible.y)
+    {
+      visible.y = y;
+      groupsPanel.scrollRectToVisible(visible);
+      updateCardDropTarget();
+    }
+  }
+
+  /**
+   * Moves the dragged service if the release is over a group.
+   *
+   * @param event the release event
+   */
+  private void dropCard(MouseEvent event)
+  {
+    ServiceCard card = draggedCard;
+    updateCardDrag(event);
+    ServiceGroupPanel target = dropGroup;
+    Component following = target == null ? null : target.cardGrid().cardAfter(dropSlot);
+    clearCardDrag();
+    if (target != null)
+    {
+      String beforeId = following instanceof ServiceCard next ? next.launcherConfiguration.itemId : null;
+      ServiceLauncherSettings settings = ServiceLauncherSettings.getInstance(project);
+      if (settings.moveService(card.launcherConfiguration.itemId, target.groupName(), beforeId))
+      {
+        rebuild();
+      }
+    }
+  }
+
+  /**
+   * Restores the source and destination grids and stops drag scrolling.
+   */
+  private void clearCardDrag()
+  {
+    dragScrollTimer.stop();
+    if (dropGroup != null)
+    {
+      dropGroup.cardGrid().setPreview(null, -1);
+    }
+    if (dragSourceGrid != null)
+    {
+      dragSourceGrid.setDraggedCard(null);
+    }
+    dropGroup = null;
+    dragSourceGrid = null;
+    dragPreview = null;
+    draggedCard = null;
+    dragPointer = null;
+  }
+
+  /**
+   * Opens the icon picker and applies the choice to the current service when confirmed.
+   *
+   * @param source the service whose icon is being edited
+   */
+  private void editServiceIcon(ServiceLauncherSettings.LauncherConfiguration source)
+  {
+    if (renamingCard != null)
+    {
+      renamingCard.finishRename(true);
+    }
+    ServiceLauncherSettings.LauncherConfiguration draft = source.copy();
+    LauncherIconEditor iconEditor = new LauncherIconEditor(project, draft);
+    DialogBuilder dialog = new DialogBuilder(project).title("Change Service Icon").centerPanel(iconEditor);
+    dialog.addOkAction().setText("Apply");
+    dialog.addCancelAction();
+    if (dialog.showAndGet())
+    {
+      ServiceLauncherSettings.LauncherConfiguration current = configurationsById.get(source.itemId);
+      if (current != null)
+      {
+        current.icon = draft.icon;
+        current.customIconName = draft.customIconName;
+        current.customIconData = draft.customIconData;
+        rebuild();
+      }
+    }
   }
 
   /**
@@ -1530,6 +1874,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
   public void dispose()
   {
     startingAnimationTimer.stop();
+    clearCardDrag();
   }
 
   /**
@@ -1550,6 +1895,8 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     private final JBLabel serviceIcon;
     private final JBLabel nameLabel;
     private final Color normalTextColor;
+    private JPanel titlePanel;
+    private JBTextField nameEditor;
 
     /**
      * Creates a new {@code ServiceCard} instance.
@@ -1564,8 +1911,8 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       this.settings = settings;
       setOpaque(true);
       setBackground(CARD_BACKGROUND);
-      setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-      setPreferredSize(new Dimension(MIN_CARD_WIDTH, 48));
+      setCursor(Cursor.getPredefinedCursor(editing ? Cursor.MOVE_CURSOR : Cursor.HAND_CURSOR));
+      setPreferredSize(new Dimension(ServiceCardGrid.MINIMUM_CARD_WIDTH, ServiceCardGrid.CARD_HEIGHT));
       setMinimumSize(new Dimension(140, 44));
 
       launcherIcon = LauncherIcons.get(launcherConfiguration);
@@ -1573,21 +1920,25 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       serviceIcon.setDisabledIcon(IconLoader.getDisabledIcon(launcherIcon));
       serviceIcon.setVerticalAlignment(SwingConstants.CENTER);
       serviceIcon.setBorder(BorderFactory.createEmptyBorder(0, 9, 0, 0));
-      content.add(serviceIcon, BorderLayout.WEST);
-
-      String linkedOrExpectedName = launcherConfiguration.configurationName == null
-        || launcherConfiguration.configurationName.isBlank()
-        ? launcherConfiguration.expectedConfigurationName
-        : launcherConfiguration.configurationName;
-      String cardName = launcherConfiguration.displayName == null || launcherConfiguration.displayName.isBlank()
-        ? (linkedOrExpectedName == null || linkedOrExpectedName.isBlank() ? "Unlinked service" : linkedOrExpectedName)
-        : launcherConfiguration.displayName;
+      String cardName = cardName();
       nameLabel = new JBLabel(toHtml(cardName), SwingConstants.CENTER);
       nameLabel.setVerticalAlignment(SwingConstants.CENTER);
       nameLabel.setFont(nameLabel.getFont().deriveFont(Font.PLAIN, nameLabel.getFont().getSize2D()));
       nameLabel.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 5));
       normalTextColor = nameLabel.getForeground();
-      content.add(nameLabel, BorderLayout.CENTER);
+      if (editing)
+      {
+        setFocusable(true);
+        registerKeyboardAction(event -> clearCardDrag(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), WHEN_FOCUSED);
+        titlePanel = createEditSurface(nameLabel, "Rename service");
+        content.add(titlePanel, BorderLayout.CENTER);
+        content.add(createEditSurface(serviceIcon, "Change service icon"), BorderLayout.WEST);
+      }
+      else
+      {
+        content.add(nameLabel, BorderLayout.CENTER);
+        content.add(serviceIcon, BorderLayout.WEST);
+      }
       content.setOpaque(false);
       add(content, JLayeredPane.DEFAULT_LAYER);
 
@@ -1611,17 +1962,68 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       linkWarning.setToolTipText(expectedName.isBlank()
         ? "This item is not linked to a run configuration. Right-click to connect it."
         : "Run configuration '" + expectedName + "' was not found. Right-click to reconnect it.");
-      linkWarning.setVisible(settings == null);
+      linkWarning.setVisible(!editing && settings == null);
       add(linkWarning, JLayeredPane.PALETTE_LAYER);
 
+      installCardMouseListener();
+      refreshState();
+    }
+
+    /**
+     * Returns the display name, falling back to the linked or expected Rider configuration.
+     *
+     * @return the current card title
+     */
+    private String cardName()
+    {
+      String linkedOrExpectedName = launcherConfiguration.configurationName == null
+        || launcherConfiguration.configurationName.isBlank()
+        ? launcherConfiguration.expectedConfigurationName
+        : launcherConfiguration.configurationName;
+      return launcherConfiguration.displayName == null || launcherConfiguration.displayName.isBlank()
+        ? (linkedOrExpectedName == null || linkedOrExpectedName.isBlank() ? "Unlinked service" : linkedOrExpectedName)
+        : launcherConfiguration.displayName;
+    }
+
+    /**
+     * Centers an edit control and makes the space around it part of the draggable card body.
+     *
+     * @param control the title or icon
+     * @param tooltip describes what clicking the control does
+     * @return the surrounding drag surface
+     */
+    private JPanel createEditSurface(JBLabel control, String tooltip)
+    {
+      control.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+      control.setToolTipText(tooltip);
+      JPanel panel = new JPanel(new GridBagLayout());
+      panel.setOpaque(false);
+      panel.add(control);
+      return panel;
+    }
+
+    /**
+     * Installs the pointer interactions for this card in the current toolbar mode.
+     */
+    private void installCardMouseListener()
+    {
       MouseAdapter listener = new MouseAdapter()
       {
         private boolean selectionArmed;
+        private Point pressPoint;
 
         /** {@inheritDoc} */
         @Override
         public void mousePressed(MouseEvent event)
         {
+          if (editing)
+          {
+            if (SwingUtilities.isLeftMouseButton(event))
+            {
+              pressPoint = event.getPoint();
+            }
+            return;
+          }
           maybeShowPopup(event);
           if (SwingUtilities.isLeftMouseButton(event))
           {
@@ -1633,6 +2035,28 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
         @Override
         public void mouseReleased(MouseEvent event)
         {
+          if (editing)
+          {
+            if (SwingUtilities.isLeftMouseButton(event))
+            {
+              if (draggedCard == ServiceCard.this)
+              {
+                dropCard(event);
+              }
+              else if (pressPoint != null && event.getComponent().contains(event.getPoint())
+                && event.getComponent() == nameLabel)
+              {
+                startRename();
+              }
+              else if (pressPoint != null && event.getComponent().contains(event.getPoint())
+                && event.getComponent() == serviceIcon)
+              {
+                editServiceIcon(launcherConfiguration);
+              }
+              pressPoint = null;
+            }
+            return;
+          }
           maybeShowPopup(event);
           if (selectionArmed && SwingUtilities.isLeftMouseButton(event))
           {
@@ -1653,6 +2077,31 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
 
         /** {@inheritDoc} */
         @Override
+        public void mouseDragged(MouseEvent event)
+        {
+          if (!editing || cards.get(launcherConfiguration.itemId) != ServiceCard.this)
+          {
+            return;
+          }
+          int threshold = DragSource.getDragThreshold();
+          if (draggedCard == ServiceCard.this)
+          {
+            updateCardDrag(event);
+          }
+          else if (pressPoint != null && pressPoint.distance(event.getPoint()) >= threshold)
+          {
+            pressPoint = null;
+            if (renamingCard != null)
+            {
+              renamingCard.finishRename(true);
+            }
+            requestFocusInWindow();
+            startCardDrag(ServiceCard.this, event);
+          }
+        }
+
+        /** {@inheritDoc} */
+        @Override
         public void mouseExited(MouseEvent event)
         {
           Point pointer = SwingUtilities.convertPoint(
@@ -1664,12 +2113,88 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
           }
         }
       };
-      addMouseListener(listener);
-      content.addMouseListener(listener);
-      nameLabel.addMouseListener(listener);
-      serviceIcon.addMouseListener(listener);
-      refreshState();
-              }
+      List<Component> surfaces = new ArrayList<>(List.of(this, content, nameLabel, serviceIcon));
+      if (editing)
+      {
+        surfaces.add(titlePanel);
+        surfaces.add(serviceIcon.getParent());
+      }
+      for (Component surface : surfaces)
+      {
+        surface.addMouseListener(listener);
+        surface.addMouseMotionListener(listener);
+      }
+    }
+
+    /**
+     * Replaces the title with an inline editor for this card.
+     */
+    private void startRename()
+    {
+      if (renamingCard != null)
+      {
+        renamingCard.finishRename(true);
+      }
+      renamingCard = this;
+      nameEditor = new JBTextField(cardName());
+      nameEditor.getAccessibleContext().setAccessibleName("Service name");
+      nameEditor.addActionListener(event -> finishRename(true));
+      nameEditor.registerKeyboardAction(event -> finishRename(false),
+        KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), WHEN_FOCUSED);
+      nameEditor.addFocusListener(new FocusAdapter()
+      {
+        /** {@inheritDoc} */
+        @Override
+        public void focusLost(FocusEvent event)
+        {
+          if (!event.isTemporary())
+          {
+            finishRename(true);
+          }
+        }
+      });
+      GridBagConstraints constraints = new GridBagConstraints();
+      constraints.fill = GridBagConstraints.HORIZONTAL;
+      constraints.weightx = 1;
+      constraints.insets = new Insets(0, 2, 0, 5);
+      titlePanel.remove(nameLabel);
+      titlePanel.add(nameEditor, constraints);
+      titlePanel.revalidate();
+      titlePanel.repaint();
+      nameEditor.selectAll();
+      nameEditor.requestFocusInWindow();
+    }
+
+    /**
+     * Closes the inline editor, applying its value if requested.
+     *
+     * @param save whether to keep the edited name
+     */
+    private void finishRename(boolean save)
+    {
+      if (nameEditor == null)
+      {
+        return;
+      }
+      JBTextField editor = nameEditor;
+      nameEditor = null;
+      renamingCard = null;
+      String name = editor.getText().trim();
+      if (save && !name.equals(cardName()))
+      {
+        launcherConfiguration.displayName = name;
+        String title = cardName();
+        nameLabel.setText(toHtml(title));
+        run.setToolTipText("Run " + title);
+        debug.setToolTipText("Debug " + title);
+        restart.setToolTipText("Restart " + title);
+        stop.setToolTipText("Stop " + title);
+      }
+      titlePanel.remove(editor);
+      titlePanel.add(nameLabel);
+      titlePanel.revalidate();
+      titlePanel.repaint();
+    }
 
     /** {@inheritDoc} */
     @Override
@@ -1763,6 +2288,25 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
     }
 
     /**
+     * Creates the status outline, using a dashed pattern on editable cards.
+     *
+     * @param selectedNow whether the service is selected
+     * @param runningNow whether the service is running
+     * @return the card outline
+     */
+    private Border createCardBorder(boolean selectedNow, boolean runningNow)
+    {
+      Color idleColor = selectedNow ? SELECTED_BORDER : (editing ? EDIT_UNSELECTED_BORDER : UNSELECTED_BORDER);
+      Color color = runningNow ? primaryColor : idleColor;
+      if (editing)
+      {
+        float thickness = runningNow ? RUNNING_BORDER_WIDTH : 1.5f;
+        return BorderFactory.createDashedBorder(color, thickness, 5f, 2f, false);
+      }
+      return BorderFactory.createLineBorder(color, runningNow ? RUNNING_BORDER_WIDTH : 1);
+    }
+
+    /**
      * Refreshes the state.
      */
     private void refreshState()
@@ -1774,9 +2318,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       {
         boolean prettyAnimation =
           preferences.startupAnimation() == ServiceLauncherPreferences.StartupAnimation.PRETTY;
-        setBorder(prettyAnimation
-          ? startingBorder
-          : BorderFactory.createLineBorder(selectedNow ? SELECTED_BORDER : UNSELECTED_BORDER));
+        setBorder(prettyAnimation ? startingBorder : createCardBorder(selectedNow, false));
         serviceIcon.setIcon(prettyAnimation ? launcherIcon : simpleStartingIcon);
         serviceIcon.setDisabledIcon(prettyAnimation
           ? IconLoader.getDisabledIcon(launcherIcon)
@@ -1784,16 +2326,13 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       }
       else
       {
-        Color borderColor = runningNow
-          ? primaryColor
-          : (selectedNow ? SELECTED_BORDER : UNSELECTED_BORDER);
-        setBorder(BorderFactory.createLineBorder(borderColor, runningNow ? RUNNING_BORDER_WIDTH : 1));
+        setBorder(createCardBorder(selectedNow, runningNow));
         serviceIcon.setIcon(launcherIcon);
         serviceIcon.setDisabledIcon(IconLoader.getDisabledIcon(launcherIcon));
       }
       setBackground(selectedNow ? CARD_BACKGROUND : UNSELECTED_CARD_BACKGROUND);
-      serviceIcon.setEnabled(selectedNow);
-      nameLabel.setForeground(selectedNow ? normalTextColor : UNSELECTED_TEXT);
+      serviceIcon.setEnabled(selectedNow || editing);
+      nameLabel.setForeground(selectedNow || editing ? normalTextColor : UNSELECTED_TEXT);
       boolean canStart = settings != null && !runningNow && !startingNow;
       boolean showStartControls = canStart && preferences.perConfigStartDebugButtons();
       boolean showRunningControls = runningNow && preferences.perConfigRestartStopButtons();
@@ -1801,7 +2340,7 @@ final class ServiceLauncherPanel extends JPanel implements Disposable
       debug.setVisible(showStartControls);
       restart.setVisible(showRunningControls);
       stop.setVisible(showRunningControls);
-      actions.setVisible(showStartControls || showRunningControls);
+      actions.setVisible(!editing && (showStartControls || showRunningControls));
       repaint();
     }
 

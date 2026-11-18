@@ -19,6 +19,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -205,6 +206,54 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
   }
 
   /**
+   * Finds available Rider configurations that can be added as new services.
+   *
+   * @param availableNames the permanent Rider run configuration names
+   * @return the unclaimed names in discovery order
+   */
+  List<String> unlinkedConfigurationNames(Collection<String> availableNames)
+  {
+    Set<String> claimedNames = new HashSet<>();
+    for (LauncherConfiguration item : state.services)
+    {
+      claimedNames.add(safe(item.configurationName));
+      claimedNames.add(safe(item.expectedConfigurationName));
+    }
+    return availableNames.stream()
+      .filter(name -> !name.isBlank() && !claimedNames.contains(name))
+      .distinct()
+      .toList();
+  }
+
+  /**
+   * Appends visible services for the chosen Rider configurations that still have no launcher entry.
+   *
+   * @param configurationNames the chosen run configuration names that are still available
+   * @param groupName the destination group
+   * @return the number of services added
+   */
+  int addServicesFromRunConfigurations(Collection<String> configurationNames, String groupName)
+  {
+    List<String> additions = unlinkedConfigurationNames(configurationNames);
+    if (additions.isEmpty())
+    {
+      return 0;
+    }
+    String group = normalizeGroup(groupName);
+    normalizeOrders(state.services);
+    int order = (int) state.services.stream().filter(item -> group.equals(item.group)).count();
+    for (String name : additions)
+    {
+      LauncherConfiguration service = new LauncherConfiguration(name, order++);
+      service.group = group;
+      service.visible = true;
+      state.services.add(service);
+    }
+    ensureGroups();
+    return additions.size();
+  }
+
+  /**
    * Returns the result of group names.
    *
    * @return the group names result
@@ -311,6 +360,69 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
   public boolean removeService(String itemId)
   {
     return state.services.removeIf(item -> item.itemId.equals(itemId));
+  }
+
+  /**
+   * Moves a service to a position in an existing group while preserving its identity and link.
+   *
+   * @param itemId the service being moved
+   * @param groupName the destination group
+   * @param beforeId the next service in the destination, or null to append
+   * @return whether the move changed the layout
+   */
+  boolean moveService(String itemId, String groupName, @Nullable String beforeId)
+  {
+    int groupIndex = indexOfGroup(groupName);
+    LauncherConfiguration source = state.services.stream().filter(item -> item.itemId.equals(itemId)).findFirst().orElse(null);
+    if (source == null || groupIndex < 0 || itemId.equals(beforeId))
+    {
+      return false;
+    }
+
+    String destination = state.groups.get(groupIndex);
+    List<LauncherConfiguration> group = new ArrayList<>(state.services.stream()
+      .filter(item -> destination.equalsIgnoreCase(item.group))
+      .toList());
+    int sourceIndex = group.indexOf(source);
+    int targetIndex = group.size();
+    if (beforeId != null)
+    {
+      for (targetIndex = 0; targetIndex < group.size(); targetIndex++)
+      {
+        if (beforeId.equals(group.get(targetIndex).itemId))
+        {
+          break;
+        }
+      }
+      if (targetIndex == group.size())
+      {
+        return false;
+      }
+    }
+    if (sourceIndex >= 0)
+    {
+      boolean samePosition = targetIndex > sourceIndex
+        && group.subList(sourceIndex + 1, targetIndex).stream().noneMatch(item -> item.visible);
+      if (samePosition)
+      {
+        return false;
+      }
+      group.remove(sourceIndex);
+      if (sourceIndex < targetIndex)
+      {
+        targetIndex--;
+      }
+    }
+
+    group.add(targetIndex, source);
+    for (int index = 0; index < group.size(); index++)
+    {
+      LauncherConfiguration item = group.get(index);
+      item.group = destination;
+      item.order = index;
+    }
+    normalizeOrders(state.services);
+    return true;
   }
 
   /**

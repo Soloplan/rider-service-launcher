@@ -31,11 +31,14 @@ To set up a project:
 3. Select the services that belong to the current development task.
 4. Use **Run** or **Debug** to start the selected services.
 
-Right-click a card to edit, move, or remove its launcher configuration. Use the pencil button when it is more convenient
-to manage the complete list in one dialog.
+Use the **Add services from Rider run configurations** toolbar button to select several unlinked run configurations
+and add them to a group at once. Right-click a card to edit, move, or remove its launcher configuration.
 
-Import and export create a self-contained `*.service-launcher.xml` file. This is the simplest way to share a useful
-launcher arrangement without modifying anyone's Rider run configurations.
+Use the pencil button to edit cards directly. Drag a card to reorder it or move it to another group. Click the card
+name to rename it or the icon to change it. Changes are saved as you make them. Select **Done** to exit Edit mode.
+
+Right-click the launcher background to import or export a self-contained `*.service-launcher.xml` file. This lets
+you share a launcher arrangement without modifying anyone's Rider run configurations.
 
 Application-level preferences are available under **Settings | Tools | Service Launcher**. They control card actions,
 selection toggles, the primary color, and the startup presentation. These preferences are not included in launcher
