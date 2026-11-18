@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Rider Service Launcher is a Java IntelliJ Platform plug-in for Rider 2025.2 and later. It is a frontend-only plug-in;
+Rider Service Launcher is a Java IntelliJ Platform plug-in for Rider 2026.3 and later. It is a frontend-only plug-in;
 there is no ReSharper backend component.
 
 The launcher is an organized view over Rider run configurations. A launcher configuration is its own entity and may
@@ -23,7 +23,7 @@ environment variables, and before-launch tasks.
 
 Follow `.editorconfig` and the existing Java sources:
 
-- Use Java 21, UTF-8, CRLF line endings, two-space indentation, and a maximum line length of 130 characters.
+- Use Java 25, UTF-8, CRLF line endings, two-space indentation, and a maximum line length of 130 characters.
 - Use Allman braces for types, methods, and control-flow blocks.
 - Put `else`, `catch`, `finally`, and `while` on a new line.
 - Add the Soloplan copyright header to new source and build-script files.
@@ -56,10 +56,9 @@ and attach that ZIP.
 
 ## Building and validation
 
-The Gradle wrapper requires Java. Rider's bundled runtime can be used from PowerShell:
+Run the Gradle wrapper with JDK 25.
 
 ```powershell
-$env:JAVA_HOME = 'C:\Program Files\JetBrains\JetBrains Rider 2025.2.2.1\jbr'
 .\gradlew.bat test buildPlugin verifyPluginStructure verifyPluginProjectConfiguration
 ```
 

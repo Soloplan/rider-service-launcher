@@ -7,8 +7,9 @@
 
 package local.soloplan.tools.servicelauncher;
 
+import com.intellij.execution.ExecutionException;
 import com.intellij.execution.Executor;
-import com.intellij.execution.executors.DefaultDebugExecutor;
+import com.intellij.execution.ExecutorRegistry;
 import com.intellij.execution.executors.DefaultRunExecutor;
 
 /**
@@ -29,18 +30,26 @@ enum ExecutionMode
   {
     /** {@inheritDoc} */
     @Override
-    Executor executor()
+    Executor executor() throws ExecutionException
     {
-      return DefaultDebugExecutor.getDebugExecutorInstance();
+      Executor executor = ExecutorRegistry.getInstance().getExecutorById(DEBUG_EXECUTOR_ID);
+      if (executor == null)
+      {
+        throw new ExecutionException("The IDE debug executor is unavailable.");
+      }
+      return executor;
     }
   };
 
+  private static final String DEBUG_EXECUTOR_ID = "Debug";
+
   /**
-   * Returns the result of executor.
+   * Resolves the IDE executor for this mode.
    *
-   * @return the executor result
+   * @return the registered executor
+   * @throws ExecutionException if the executor is unavailable
    */
-  abstract Executor executor();
+  abstract Executor executor() throws ExecutionException;
 
   /**
    * Returns the result of from executor id.
@@ -50,7 +59,6 @@ enum ExecutionMode
    */
   static ExecutionMode fromExecutorId(String executorId)
   {
-    String debugExecutorId = DefaultDebugExecutor.getDebugExecutorInstance().getId();
-    return debugExecutorId.equals(executorId) ? DEBUG : RUN;
+    return DEBUG_EXECUTOR_ID.equals(executorId) ? DEBUG : RUN;
   }
 }
