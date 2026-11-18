@@ -363,6 +363,69 @@ public final class ServiceLauncherSettings implements PersistentStateComponent<S
   }
 
   /**
+   * Moves a service to a position in an existing group while preserving its identity and link.
+   *
+   * @param itemId the service being moved
+   * @param groupName the destination group
+   * @param beforeId the next service in the destination, or null to append
+   * @return whether the move changed the layout
+   */
+  boolean moveService(String itemId, String groupName, @Nullable String beforeId)
+  {
+    int groupIndex = indexOfGroup(groupName);
+    LauncherConfiguration source = state.services.stream().filter(item -> item.itemId.equals(itemId)).findFirst().orElse(null);
+    if (source == null || groupIndex < 0 || itemId.equals(beforeId))
+    {
+      return false;
+    }
+
+    String destination = state.groups.get(groupIndex);
+    List<LauncherConfiguration> group = new ArrayList<>(state.services.stream()
+      .filter(item -> destination.equalsIgnoreCase(item.group))
+      .toList());
+    int sourceIndex = group.indexOf(source);
+    int targetIndex = group.size();
+    if (beforeId != null)
+    {
+      for (targetIndex = 0; targetIndex < group.size(); targetIndex++)
+      {
+        if (beforeId.equals(group.get(targetIndex).itemId))
+        {
+          break;
+        }
+      }
+      if (targetIndex == group.size())
+      {
+        return false;
+      }
+    }
+    if (sourceIndex >= 0)
+    {
+      boolean samePosition = targetIndex > sourceIndex
+        && group.subList(sourceIndex + 1, targetIndex).stream().noneMatch(item -> item.visible);
+      if (samePosition)
+      {
+        return false;
+      }
+      group.remove(sourceIndex);
+      if (sourceIndex < targetIndex)
+      {
+        targetIndex--;
+      }
+    }
+
+    group.add(targetIndex, source);
+    for (int index = 0; index < group.size(); index++)
+    {
+      LauncherConfiguration item = group.get(index);
+      item.group = destination;
+      item.order = index;
+    }
+    normalizeOrders(state.services);
+    return true;
+  }
+
+  /**
    * Normalizes the orders.
    *
    * @param services the services

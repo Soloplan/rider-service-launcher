@@ -21,7 +21,6 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.Font;
-import java.awt.GridLayout;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
@@ -35,17 +34,16 @@ import java.util.function.Consumer;
  */
 final class ServiceGroupPanel extends JPanel
 {
-  private static final int MINIMUM_CARD_WIDTH = 180;
   private static final int CARD_GAP = 6;
   private static final int HEADING_SIZE_INCREASE = 2;
   private static final int SELECTION_ICON_SIZE = 12;
   private static final int SELECTION_SLOT_SIZE = 18;
 
-  private final JPanel cardGrid = new JPanel();
+  private final String groupName;
+  private final ServiceCardGrid cardGrid;
   private final JButton selectionToggleButton;
   private final BooleanSupplier allSelected;
   private final boolean showSelectionToggle;
-  private int columns;
 
   /**
    * Creates a new {@code ServiceGroupPanel} instance.
@@ -56,6 +54,8 @@ final class ServiceGroupPanel extends JPanel
    * @param allSelected supplies whether all cards in the category are selected
    * @param selectionToggle toggles the selection of every card in the category
    * @param showSelectionToggle whether the category toggle should be available
+   * @param editing whether empty groups need space to receive dropped cards
+   * @param initialWidth the launcher width available before the group's first layout
    */
   ServiceGroupPanel(
     String title,
@@ -63,17 +63,21 @@ final class ServiceGroupPanel extends JPanel
     Consumer<JComponent> popupInstaller,
     BooleanSupplier allSelected,
     Runnable selectionToggle,
-    boolean showSelectionToggle
+    boolean showSelectionToggle,
+    boolean editing,
+    int initialWidth
   )
   {
     super(new BorderLayout(0, CARD_GAP));
+    groupName = title;
+    cardGrid = new ServiceCardGrid(cards, editing, initialWidth);
     this.allSelected = allSelected;
     this.showSelectionToggle = showSelectionToggle;
     selectionToggleButton = createSelectionToggleButton(selectionToggle);
     setOpaque(false);
     popupInstaller.accept(this);
     add(createHeading(title, popupInstaller), BorderLayout.NORTH);
-    configureCardGrid(cards, popupInstaller);
+    popupInstaller.accept(cardGrid);
     add(cardGrid, BorderLayout.CENTER);
     selectionToggleButton.setEnabled(showSelectionToggle && !cards.isEmpty());
     refreshSelectionState();
@@ -87,10 +91,29 @@ final class ServiceGroupPanel extends JPanel
       @Override
       public void componentResized(ComponentEvent event)
       {
-        updateColumns();
+        cardGrid.updateColumns(getWidth());
       }
     });
-    javax.swing.SwingUtilities.invokeLater(this::updateColumns);
+  }
+
+  /**
+   * Returns the launcher group displayed by this panel.
+   *
+   * @return the group name
+   */
+  String groupName()
+  {
+    return groupName;
+  }
+
+  /**
+   * Returns the grid that lays out this group's cards and drop preview.
+   *
+   * @return the card grid
+   */
+  ServiceCardGrid cardGrid()
+  {
+    return cardGrid;
   }
 
   /**
@@ -202,35 +225,6 @@ final class ServiceGroupPanel extends JPanel
         installHoverListener(child, hoverListener);
       }
     }
-  }
-
-  /**
-   * Configures the card grid.
-   *
-   * @param cards the cards
-   * @param popupInstaller the popup installer
-   */
-  private void configureCardGrid(List<? extends Component> cards, Consumer<JComponent> popupInstaller)
-  {
-    cardGrid.setOpaque(false);
-    popupInstaller.accept(cardGrid);
-    cards.forEach(cardGrid::add);
-  }
-
-  /**
-   * Updates the columns.
-   */
-  private void updateColumns()
-  {
-    int usableWidth = Math.max(MINIMUM_CARD_WIDTH, getWidth());
-    int desiredColumns = Math.max(1, (usableWidth + CARD_GAP) / (MINIMUM_CARD_WIDTH + CARD_GAP));
-    if (desiredColumns == columns)
-    {
-      return;
-    }
-    columns = desiredColumns;
-    cardGrid.setLayout(new GridLayout(0, columns, CARD_GAP, CARD_GAP));
-    revalidate();
   }
 
   /** {@inheritDoc} */

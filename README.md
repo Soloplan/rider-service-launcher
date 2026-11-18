@@ -34,6 +34,9 @@ To set up a project:
 Use the **Add services from Rider run configurations** toolbar button to select several unlinked run configurations
 and add them to a group at once. Right-click a card to edit, move, or remove its launcher configuration.
 
+Use the pencil button to edit cards directly. Drag a card to reorder it or move it to another group. Click the card
+name to rename it or the icon to change it. Changes are saved as you make them. Select **Done** to exit Edit mode.
+
 Right-click the launcher background to import or export a self-contained `*.service-launcher.xml` file. This lets
 you share a launcher arrangement without modifying anyone's Rider run configurations.
 

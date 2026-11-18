@@ -191,6 +191,61 @@ public class ServiceLauncherSettingsTest
   }
 
   /**
+   * Moves cards in both directions and keeps a drop in the same visible slot from moving a hidden card.
+   */
+  @Test
+  public void movingAServiceUsesTheVisibleInsertionSlot()
+  {
+    ServiceLauncherSettings settings = new ServiceLauncherSettings();
+    settings.addServicesFromRunConfigurations(List.of("First", "Hidden", "Last"), "Backend");
+    List<ServiceLauncherSettings.LauncherConfiguration> services = settings.reconciledWith(List.of("First", "Hidden", "Last"));
+    ServiceLauncherSettings.LauncherConfiguration first = services.get(0);
+    ServiceLauncherSettings.LauncherConfiguration hidden = services.get(1);
+    ServiceLauncherSettings.LauncherConfiguration last = services.get(2);
+    hidden.visible = false;
+
+    assertFalse(settings.moveService(first.itemId, "Backend", first.itemId));
+    assertFalse(settings.moveService(first.itemId, "Backend", last.itemId));
+    assertEquals(List.of(first, hidden, last), services);
+    assertTrue(settings.moveService(first.itemId, "Backend", null));
+    assertEquals(List.of(hidden, last, first), services);
+    assertTrue(settings.moveService(first.itemId, "Backend", last.itemId));
+    assertEquals(List.of(hidden, first, last), services);
+  }
+
+  /**
+   * Persists moves into empty and occupied groups without changing the service identity or Rider link.
+   */
+  @Test
+  public void movingAcrossGroupsPreservesTheLinkAfterReload()
+  {
+    ServiceLauncherSettings settings = new ServiceLauncherSettings();
+    settings.addServicesFromRunConfigurations(List.of("Orders"), "Backend");
+    settings.addServicesFromRunConfigurations(List.of("Website"), "Frontend");
+    settings.addGroup("Empty");
+    List<String> available = List.of("Orders", "Website");
+    List<ServiceLauncherSettings.LauncherConfiguration> services = settings.reconciledWith(available);
+    ServiceLauncherSettings.LauncherConfiguration orders = services.getFirst();
+    String ordersId = orders.itemId;
+    String websiteId = services.get(1).itemId;
+
+    assertFalse(settings.moveService(ordersId, "Empty", websiteId));
+    assertTrue(settings.moveService(ordersId, "Empty", null));
+    assertEquals("Empty", orders.group);
+    assertTrue(settings.moveService(ordersId, "Frontend", websiteId));
+
+    Element serialized = XmlSerializer.serialize(settings.getState());
+    ServiceLauncherSettings reloaded = new ServiceLauncherSettings();
+    reloaded.loadState(XmlSerializer.deserialize(serialized, ServiceLauncherSettings.StateData.class));
+    var moved = reloaded.reconciledWith(available);
+    assertEquals(List.of(ordersId, websiteId), moved.stream().map(item -> item.itemId).toList());
+    assertEquals(available, moved.stream().map(item -> item.configurationName).toList());
+    assertEquals(List.of(0, 1), moved.stream().map(item -> item.order).toList());
+    assertTrue(moved.stream().allMatch(item -> "Frontend".equals(item.group)));
+    assertEquals(List.of("Backend", "Frontend", "Empty"), reloaded.groupNames());
+  }
+
+  /**
    * Performs the group names are unique ignoring case operation.
    */
   @Test
